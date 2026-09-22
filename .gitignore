@@ -1,2 +1,22 @@
-project-description/
+# Environment / secrets
 .env.axiom
+.env
+.env.*
+!.env.example
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Note: per-app ignores live in backend/.gitignore (.venv, __pycache__, etc.)
+# and frontend/.gitignore (node_modules, .next, etc.)
