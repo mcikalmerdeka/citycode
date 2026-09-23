@@ -2,14 +2,23 @@
 #
 # Each subfolder maps to one layer of the pipeline:
 #
-#   git/     simple-git wrappers: shallow clone (HEAD only), diff HEAD~1,
-#            diff working directory (git status --porcelain)
-#   parser/  web-tree-sitter parsing -> file/function/import graph model
-#            (WASM grammars from tree-sitter-wasms/out/*.wasm)
-#   city/    graph model -> city layout (buildings, districts, roads)
-#   llm/     OpenCode GLM client (openai SDK, baseURL from env) + summary prompts
+#   git/     simple-git wrappers. Implemented: local.ts (deterministic .ts/.tsx
+#            folder walk skipping node_modules/.git/.next/dist/build/
+#            .citycode-cache; git repo detection + HEAD sha via simple-git).
+#            Clone/diff wrappers arrive in Phase 3/4/5.
+#   parser/  web-tree-sitter parsing → the shared graph model. Implemented:
+#            sitter.ts     WASM init singleton; grammars load from each grammar
+#                          package's OWN prebuild
+#                          (node_modules/tree-sitter-typescript/tree-sitter-{typescript,tsx}.wasm) —
+#                          NOT tree-sitter-wasms, whose 2023-era builds fail to
+#                          load in web-tree-sitter@0.27 (Phase 0 Spike A finding).
+#            extract.ts    file → functions + import statements
+#            resolve.ts    ./../ imports → intra-repo edges (bare/alias never edges)
+#            buildGraph.ts folder → CodeGraph (deterministic, byte-identical JSON)
+#   city/    (Phase 2) graph model → city layout (buildings, districts, roads)
+#   llm/     (Phase 3) OpenCode GLM client (openai SDK, baseURL from env) + summary prompts
 #
-# These are placeholders so the layout is committed; replace this file as
-# each module gets implemented. Types for the shared graph model should live
-# here and be imported by every layer, since static view and both compare
-# modes render from the same shape.
+# types.ts holds the shared graph model (CodeGraph/FileNode/SymbolDef/
+# ImportEdge) imported by every layer — static view and both compare modes
+# render from the same shape. Phase 1 limitation: TypeScript/TSX only; arrow-
+# function consts, dynamic imports, and tsconfig aliases are not captured.
