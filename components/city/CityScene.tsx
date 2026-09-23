@@ -18,6 +18,11 @@ import { useCityStore } from "@/lib/store";
 import { Buildings } from "./Buildings";
 import { Districts } from "./Districts";
 import { Roads } from "./Roads";
+import { installThreeConsoleFilter } from "./threeConsoleFilter";
+
+// Drop the R3F-internal THREE.Clock deprecation warning (removal condition
+// documented in threeConsoleFilter.ts — gone once fiber v10 stable ships).
+installThreeConsoleFilter();
 
 /** Scene background — near-black zinc, slightly warmer than the ground. */
 const SCENE_BACKGROUND = "#0b0c0f";

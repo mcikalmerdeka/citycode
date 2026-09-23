@@ -151,7 +151,7 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 1. ✅ Import a local folder → city renders: districts labeled (drei Html labels), building height ∝ LOC, roads connect importing→imported (verified in browser: self-repo → 29 buildings, 12 districts, 42 roads)
 2. ✅ Click any building → inspect panel updates with that file's details (path/LOC/functions/importers); legend visible (verified in browser; highlight = ×1.02 emissive overlay)
 3. ✅ Import the same repo twice → **pixel-identical layout** — `/api/analyze` responses byte-identical across consecutive runs on both `tests/` (6,862 B) and the full self-repo (26,016 B)
-4. ✅ Orbit/zoom/pan camera works (OrbitControls, damping); dev console clean — 0 errors, only the known-benign R3F-internal `THREE.Clock` deprecation (same baseline as Phase 0 Spike B); `pnpm build` green (Turbopack, `/api/analyze` registered dynamic)
+4. ✅ Orbit/zoom/pan camera works (OrbitControls, damping); dev console clean — the R3F-internal `THREE.Clock` deprecation warning is surgically filtered via three's `setConsoleFunction` hook (`components/city/threeConsoleFilter.ts`, removal condition: fiber v10 stable); `pnpm build` green (Turbopack, `/api/analyze` registered dynamic)
 5. ✅ `pnpm test` 51/51 (21 new layout tests: determinism, containment, sortedness, no-NaN, height/footprint formulas, road endpoints, defensive unsorted-input invariance), `pnpm lint` clean, `npx tsc --noEmit` clean
 
 ---
