@@ -14,7 +14,7 @@ AI coding assistants can generate or modify large amounts of code in minutes —
 - Compare HEAD against exactly one previous commit (HEAD~1) — a single-step diff, not a history browser.
 - Compare HEAD against uncommitted working-directory changes — mirroring the moment right before a normal `git commit`.
 - Let a generated city be saved and reloaded instantly, without re-parsing the repo from scratch.
-- Use an LLM (via an OpenAI-compatible endpoint) to generate plain-English explanations of files/functions and of what changed.
+- Use an LLM to generate plain-English explanations of files/functions and of what changed. Implementation (updated 2026-09-24 during Phase 3): the standard **OpenAI API** with `gpt-6-luna` at reasoning effort `medium` — originally specced as "an OpenAI-compatible endpoint" (OpenCode), switched since OpenCode Go required an extra session header plus a subscription for no added value here.
 
 ## 4. Non-Goals
 
@@ -24,7 +24,7 @@ AI coding assistants can generate or modify large amounts of code in minutes —
 - **No multi-user or hosting concerns.** Built for personal use, run locally.
 - Not a code editor or IDE replacement.
 - Not attempting runtime/behavioral visualization (execution tracing).
-- Not aiming for full multi-language support at launch — one primary language first.
+- Not aiming for full multi-language support — one primary language plus one second language first. (Updated 2026-09-24: TypeScript/TSX for the first city render, Python added early by user request.)
 
 ## 5. Primary User
 

@@ -8,7 +8,7 @@
 >
 > **Status legend:** ✅ done · 🚧 in progress · ⬜ pending · ⏸️ deferred · ❌ cancelled
 >
-> Last updated: 2026-09-23
+> Last updated: 2026-09-24
 
 ---
 
@@ -156,7 +156,7 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 
 ---
 
-## Phase 3 — GitHub Import + LLM Click-to-Inspect ⬜ (0%)
+## Phase 3 — GitHub Import + LLM Click-to-Inspect ✅ (100%)
 
 **Goal:** Paste a GitHub URL to shallow-clone-and-render, and clicking any building shows a cached plain-English explanation of that file (PRD milestone 2 + §7.2 click-to-inspect).
 
@@ -164,25 +164,25 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 
 - `lib/git/clone.ts` — `git clone --depth 1` into `.citycode-cache/clones/<repo-owner>/` (already gitignored), plus cleanup of stale clones
 - `lib/git/url.ts` — GitHub URL validation/normalization → repo name
-- `lib/llm/client.ts` — `openai` SDK with `OPENCODE_BASE_URL`/`OPENCODE_API_KEY`/`OPENCODE_MODEL` from env
+- `lib/llm/client.ts` — `openai` SDK; originally specced with `OPENCODE_*` env vars, implemented against the standard OpenAI endpoint (`OPENAI_API_KEY`; `gpt-6-luna` @ medium reasoning — see the task list below for the change)
 - `lib/llm/prompts.ts` — `explainFile()` prompt (path, symbols, LOC, key imports → 2–4 plain sentences)
 - `app/api/explain/route.ts` — POST `{ repoKey, fileId }` → `{ summary, cached }`
 - `components/ui/ExplainPanel.tsx` — explanation UI with loading / error / content states
 
 ### Tasks
-- [ ] `clone.ts`: shallow clone wrapper, disk-location policy, handle clone failures (private/nonexistent repos) with clean errors
-- [ ] `url.ts`: accept `https://github.com/<owner>/<repo>` (+ optional `.git`), reject other hosts for v1
-- [ ] `llm/client.ts`: single shared client instance; graceful "missing API key" error that degrades the app (city still usable, explanations disabled with a clear message)
-- [ ] `prompts.ts`: `explainFile(graph, fileNode)` — prompt from extracted symbols + importers, capped input size, no raw file contents needed beyond trimmed excerpts
-- [ ] `app/api/explain/route.ts`: in-memory cache keyed `(repoKey, headSha, fileId)` — one LLM call per file ever (persisted to the snapshot in Phase 6, which finally satisfies PRD risk §11 LLM-cost)
-- [ ] `ExplainPanel.tsx` merges into the inspect panel; show "cached" state on repeat clicks
-- [ ] `ImportForm.tsx`: add GitHub-URL tab; both tabs feed the same `/api/analyze` pipeline with `source: "github"`
+- [x] `clone.ts`: shallow clone wrapper (`git clone --depth 1 --single-branch` via simple-git into `.citycode-cache/clones/<owner>/<repo>`; destination always wiped first so re-imports get fresh HEAD; `GIT_TERMINAL_PROMPT=0` prevents hangs; best-effort sweep of sibling clones older than 24h; every failure mapped to one fixed readable message — private/nonexistent are indistinguishable server-side)
+- [x] `url.ts`: accepts `https://github.com/<owner>/<repo>` (+ optional `.git`, trailing slash, `www.` — with programmatic tests); every other host rejected for v1
+- [x] `llm/client.ts`: single shared client instance (singleton, env read lazily); missing `OPENAI_API_KEY` throws `LlmConfigError`, which `/api/explain` maps to a readable 503 — the city stays fully usable, explanations disabled. **Provider change (2026-09-24):** switched from the OpenCode Go endpoint (which required an `x-opencode-session` header and a subscription) to the standard OpenAI endpoint — model `gpt-6-luna` (released 2026-09-22) at `reasoning_effort: "medium"`; with reasoning ≠ none, Chat Completions rejects `temperature`/`top_p`, so neither is sent
+- [x] `prompts.ts`: `buildExplainUserPrompt(graph, file)` — path, LOC, language, function names+spans, importers/importees (deduped), external packages; functions capped at 40, link lists at 20 (+N more); no raw file contents needed
+- [x] `app/api/explain/route.ts`: in-memory graph store (`lib/llm/graphCache.ts`) filled by `/api/analyze` keyed `repoKey` (`source:repoPath`, shared via `lib/repoKey.ts`), plus summary cache keyed `(repoKey, headSha, fileId)` — one LLM call per file ever (persisted to snapshots in Phase 6). Failure mapping: 400 bad/unknown key, 503 unconfigured LLM, 502 upstream errors; never a plain 500
+- [x] `ExplainPanel.tsx` merged into `InspectPanel` (TanStack Query, auto-fetch on selection change, staleTime∞ + server cache → "cached" badge on repeat clicks); `ImportForm` got Local/GitHub tabs feeding the same `/api/analyze` with `source: "github"` (response now also carries `repoKey`)
+- [x] `buildGraph(root, source)` — graphs built from a clone are tagged `source: "github"`; `/api/analyze` clones → walks → parses → lays out, storing the graph server-side for explain
 
 ### Acceptance
-1. Paste a small public GitHub repo URL → clone → city renders via the identical Phase 1/2 pipeline
-2. Click a building → explanation appears; click the same building again → instant, served from cache (verify: only one API call in the dev log)
-3. With `OPENCODE_API_KEY` unset → clear error banner, city fully usable without explanations
-4. Clone failure (bad URL) → readable error, no crash
+1. ✅ Paste a GitHub URL (`to-readable-stream.git`, verified 2026-09-24) → shallow clone into `.citycode-cache/clones/sindresorhus/…` → city renders through the identical Phase 1/2 pipeline (`source: "github"`, real sha, files=2)
+2. ✅ Click a building → real `gpt-6-luna` explanation appears (first call 3.5s, uncached); clicking the same building again → instant, served from cache (second call 38ms, `cached: true`)
+3. ✅ Missing `OPENAI_API_KEY` → the `LlmConfigError` message is surfaced as a readable 503 in the explain section (unit-tested); the city renders and navigates normally
+4. ✅ Clone failure (nonexistent repo) → readable error, no crash (verified over HTTP); malformed URL (non-github host) rejected before any git call
 
 ---
 
@@ -297,7 +297,7 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 |---|---|---|
 | Health overlays (complexity, dead-code layers) | ⏸️ | PRD §7.6 |
 | Exportable city snapshot image | ⏸️ | PRD §7.6 |
-| Second language: Python (grammar already in devDeps) | ⏸️ | PRD §7.6 |
+| Second language: Python (grammar already in devDeps) | ✅ Delivered early (2026-09-24, user request) — see "Python support" under Phase 1 completion | PRD §7.6 |
 | Zoning-violation detection (red-flagged improper coupling) | ⏸️ | PRD §6 metaphor table — no launch feature requires it |
 | 2D isometric SVG/Canvas fallback renderer | ⏸️ | Tech-stack §3 — swap-in only if 3D iteration becomes the bottleneck; data model unchanged |
 | Playwright UI tests | ⏸️ | Tech-stack §8 — add only if the same UI flow keeps being re-verified manually |
@@ -326,7 +326,7 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 
 ## Known Limitations (honest, by design)
 
-- One primary language at launch: TypeScript/TSX (JavaScript grammar as a cheap add if it falls out of Spike A cleanly)
+- Second language in place: TypeScript/TSX **and Python** (added 2026-09-24): Python absolute imports resolve repo-root-anchored, relative ones from the importer's package; third-party modules recorded as external. Flat/`__init__.py` layouts covered; exotic src-layout path-packages are not
 - Only ever two states compared: HEAD vs. HEAD~1, or HEAD vs. workdir — no history browser, ever
 - Local-first, single-user, no auth/hosting — running on a machine without `git` on `PATH` breaks clone/diff features (fine for the intended use)
 - Snapshot JSON is the entire persistence layer — no DB, no migrations, by design
@@ -334,7 +334,7 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 
 ## Currently Working On
 
-**Phase 3 — GitHub Import + LLM Click-to-Inspect.** Phase 2 complete (2026-09-23): squarified treemap layout engine + R3F city scene landed, 51/51 tests green, byte-identical determinism verified over HTTP, browser acceptance passed (render/inspect/legend/orbit/console). First actions: `lib/git/clone.ts` + `lib/git/url.ts`, then the LLM client (`lib/llm/client.ts` + `prompts.ts`), then `/api/explain` and the GitHub tab in `ImportForm.tsx` feeding the same `/api/analyze` pipeline with `source: "github"`.
+**Phase 4 — Compare Mode: HEAD vs. HEAD~1.** Phase 3 complete (2026-09-24): GitHub shallow-clone import (`lib/git/url.ts` + `lib/git/clone.ts`), LLM click-to-inspect (`lib/llm/client.ts` on the standard OpenAI endpoint with `gpt-6-luna` @ medium reasoning, `lib/llm/prompts.ts`, `/api/explain` with the in-memory `(repoKey, headSha, fileId)` summary cache), GitHub tab in `ImportForm`, and `ExplainPanel` merged into `InspectPanel`. 73/73 tests green, `tsc`/lint/build clean, browser acceptance verified over HTTP (real clone, real explanation, cache hit, clone-failure + unconfigured-key error paths). Next up: `lib/git/diff.ts` (`diffCommits`) + `lib/diff/apply.ts` classification/blast-radius.
 
 ## Quick Status
 
@@ -343,7 +343,7 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 | 0 | Setup & technical validation | ✅ | 100 |
 | 1 | Graph model + local ingestion | ✅ | 100 |
 | 2 | City layout + static 3D view | ✅ | 100 |
-| 3 | GitHub import + LLM inspect | ⬜ | 0 |
+| 3 | GitHub import + LLM inspect | ✅ | 100 |
 | 4 | Compare: HEAD vs. HEAD~1 | ⬜ | 0 |
 | 5 | Compare: HEAD vs. workdir | ⬜ | 0 |
 | 6 | Save / reload snapshots | ⬜ | 0 |

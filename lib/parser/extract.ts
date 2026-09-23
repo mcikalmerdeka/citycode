@@ -64,6 +64,17 @@ export async function extractFromFile(
 function walkNode(node: Node, functions: SymbolDef[], imports: ExtractedImport[]): void {
   switch (node.type) {
     case "import_statement": {
+      // Node shapes verified empirically against the installed grammars:
+      // - TypeScript/JS: `import <clause> from "<src>"` / re-exports, keyed by
+      //   the `source` field; side-effect imports have no clause.
+      // - Python: `import a.b` / `import x as y` — module is the first
+      //   `dotted_name` (plain or wrapped in `aliased_import`); bare edge,
+      //   no named symbols.
+      const moduleText = firstDottedNameText(node);
+      if (moduleText !== undefined) {
+        imports.push({ specifier: moduleText, symbols: [] });
+        return;
+      }
       const importPath = extractSourceString(node);
       if (importPath !== undefined) {
         const symbols: string[] = [];
@@ -73,6 +84,27 @@ function walkNode(node: Node, functions: SymbolDef[], imports: ExtractedImport[]
       // Side-effect imports (no clause) still have nothing below them; but
       // plain imports could theoretically nest nothing either. No recursion.
       return;
+    }
+    case "import_from_statement": {
+      // Python `from <module> import a, b` — module comes from the
+      // `module_name` field ("mypkg.sub", ".", ".inner.mod"); the remaining
+      // dotted_name/aliased_import children are the imported names.
+      const moduleNode = node.childForFieldName("module_name");
+      if (moduleNode !== null) {
+        const symbolNodes: string[] = [];
+        for (const child of node.namedChildren) {
+          if (child.id === moduleNode.id) {
+            continue;
+          }
+          const text = firstDottedNameText(child);
+          if (text !== undefined) {
+            symbolNodes.push(text);
+          }
+        }
+        imports.push({ specifier: moduleNode.text, symbols: symbolNodes });
+        return;
+      }
+      break;
     }
     case "export_statement": {
       // A re-export (`export ... from "./x"`) carries a source field; plain
@@ -89,7 +121,8 @@ function walkNode(node: Node, functions: SymbolDef[], imports: ExtractedImport[]
     }
     case "function_declaration":
     case "generator_function_declaration":
-    case "method_definition": {
+    case "method_definition":
+    case "function_definition": { // Python def / async def — same name-field shape
       const nameNode = node.childForFieldName("name");
       if (nameNode !== null && nameNode.text.length > 0) {
         functions.push({
@@ -120,6 +153,30 @@ function extractSourceString(node: Node): string | undefined {
     }
   }
   // Malformed string literal (e.g. unterminated) — no usable specifier.
+  return undefined;
+}
+
+/**
+ * Text of the first `dotted_name` under `node`, unwrapping `aliased_import`.
+ * For `import a.b` / `from a.b import x` this yields "a.b" without the "as"
+ * alias. Returns undefined when no dotted_name exists (non-Python grammars,
+ * malformed statements).
+ */
+function firstDottedNameText(node: Node): string | undefined {
+  if (node.type === "dotted_name") {
+    return node.text;
+  }
+  if (node.type === "aliased_import") {
+    return firstDottedNameText(node.namedChildren[0]);
+  }
+  for (const child of node.namedChildren) {
+    if (child.type === "dotted_name") {
+      return child.text;
+    }
+    if (child.type === "aliased_import") {
+      return firstDottedNameText(child);
+    }
+  }
   return undefined;
 }
 

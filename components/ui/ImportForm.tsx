@@ -20,6 +20,8 @@ export interface AnalyzeResponse {
   graph: CodeGraph;
   layout: CityLayout;
   warnings: { path: string; message: string }[];
+  /** Stable repo key shared with /api/explain (Phase 3). */
+  repoKey: string;
 }
 
 /* ------------------------------------------------------------------ *
@@ -57,7 +59,7 @@ function isFileNode(value: unknown): value is CodeGraph["files"][number] {
     isStr(value.id) &&
     isStr(value.path) &&
     isNum(value.loc) &&
-    (value.language === "typescript" || value.language === "tsx") &&
+    (value.language === "typescript" || value.language === "tsx" || value.language === "python") &&
     Array.isArray(value.functions) &&
     value.functions.every(isSymbolDef) &&
     Array.isArray(value.externalImports) &&
@@ -143,17 +145,20 @@ function isAnalyzeResponse(value: unknown): value is AnalyzeResponse {
     isCodeGraph(value.graph) &&
     isCityLayout(value.layout) &&
     Array.isArray(value.warnings) &&
-    value.warnings.every(isWarning)
+    value.warnings.every(isWarning) &&
+    isStr(value.repoKey)
   );
 }
 
 /* ------------------------------------------------------------------ */
 
-async function analyze(input: string): Promise<AnalyzeResponse> {
+type ImportMode = "local" | "github";
+
+async function analyze(request: { source: "local"; path: string } | { source: "github"; repoUrl: string }): Promise<AnalyzeResponse> {
   const response = await fetch("/api/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source: "local", path: input }),
+    body: JSON.stringify(request),
   });
   // A 400 body is { error }; a network/HTML failure may not parse at all.
   const body: unknown = await response.json().catch(() => null);
@@ -168,7 +173,12 @@ async function analyze(input: string): Promise<AnalyzeResponse> {
 }
 
 export function ImportForm({ onSuccess }: { onSuccess: (data: AnalyzeResponse) => void }) {
+  const [mode, setMode] = useState<ImportMode>("local");
   const [path, setPath] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
+
+  const currentValue = mode === "local" ? path : repoUrl;
+  const setValue = mode === "local" ? (value: string) => setPath(value) : (value: string) => setRepoUrl(value);
 
   const mutation = useMutation({
     mutationFn: analyze,
@@ -177,25 +187,53 @@ export function ImportForm({ onSuccess }: { onSuccess: (data: AnalyzeResponse) =
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const trimmed = path.trim();
+    const trimmed = currentValue.trim();
     if (trimmed.length === 0 || mutation.isPending) return;
-    mutation.mutate(trimmed);
+    mutation.mutate(
+      mode === "local" ? { source: "local", path: trimmed } : { source: "github", repoUrl: trimmed },
+    );
   };
+
+  const pendingLabel = mode === "local" ? "parsing files…" : "cloning repo…";
 
   return (
     <form onSubmit={handleSubmit} className="mt-4 space-y-2.5">
+      <div className="flex gap-1" role="tablist" aria-label="Import source">
+        {(
+          [
+            ["local", "Local folder"],
+            ["github", "GitHub URL"],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            role="tab"
+            aria-selected={mode === value}
+            disabled={mutation.isPending}
+            onClick={() => setMode(value)}
+            className={
+              mode === value
+                ? "flex-1 rounded-md border border-zinc-100 bg-zinc-100 px-2 py-1 text-[11px] font-medium text-zinc-950 disabled:opacity-100"
+                : "flex-1 rounded-md border border-zinc-700/80 px-2 py-1 text-[11px] font-medium text-zinc-400 transition-colors hover:text-zinc-200 disabled:opacity-40"
+            }
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       <label
         htmlFor="import-path"
         className="block font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500"
       >
-        Local folder path
+        {mode === "local" ? "Local folder path" : "GitHub repo URL"}
       </label>
       <input
         id="import-path"
         type="text"
-        value={path}
-        onChange={(event) => setPath(event.target.value)}
-        placeholder="E:/repos/my-project"
+        value={currentValue}
+        onChange={(event) => setValue(event.target.value)}
+        placeholder={mode === "local" ? "E:/repos/my-project" : "https://github.com/owner/repo"}
         autoComplete="off"
         spellCheck={false}
         disabled={mutation.isPending}
@@ -203,19 +241,16 @@ export function ImportForm({ onSuccess }: { onSuccess: (data: AnalyzeResponse) =
       />
       <button
         type="submit"
-        disabled={mutation.isPending || path.trim().length === 0}
+        disabled={mutation.isPending || currentValue.trim().length === 0}
         className="w-full rounded-md bg-zinc-100 py-1.5 text-xs font-semibold text-zinc-950 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {mutation.isPending ? "parsing files…" : "Build city"}
+        {mutation.isPending ? pendingLabel : "Build city"}
       </button>
       {mutation.isError && mutation.error ? (
         <p role="alert" className="text-xs leading-relaxed text-red-400">
           {mutation.error.message}
         </p>
       ) : null}
-      <p className="pt-0.5 text-[11px] text-zinc-600">
-        GitHub import arrives in Phase 3
-      </p>
     </form>
   );
 }

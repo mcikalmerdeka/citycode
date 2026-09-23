@@ -11,8 +11,8 @@
  *    valid on any machine; only {@link CodeGraph.repoPath} is absolute.
  */
 
-/** Grammar language of a parsed source file. Phase 1 covers TypeScript only. */
-export type FileLanguage = "typescript" | "tsx";
+/** Grammar language of a parsed source file. Supports TypeScript and Python. */
+export type FileLanguage = "typescript" | "tsx" | "python";
 
 /**
  * A named function or class-method symbol extracted from a source file.
@@ -101,6 +101,6 @@ export interface CodeGraph {
    * allowed in the graph.
    */
   repoPath: string;
-  /** Ingestion source. Phase 1 always sets "local"; GitHub arrives in Phase 3. */
+  /** Ingestion source: "local" for direct folders, "github" for cloned repos (Phase 3). */
   source: GraphSource;
 }

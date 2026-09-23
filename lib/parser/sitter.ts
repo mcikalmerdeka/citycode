@@ -27,6 +27,7 @@ import type { FileLanguage } from "../types";
 const GRAMMAR_WASMS: Readonly<Record<FileLanguage, { readonly packageName: string; readonly filename: string }>> = {
   typescript: { packageName: "tree-sitter-typescript", filename: "tree-sitter-typescript.wasm" },
   tsx: { packageName: "tree-sitter-typescript", filename: "tree-sitter-tsx.wasm" },
+  python: { packageName: "tree-sitter-python", filename: "tree-sitter-python.wasm" },
 };
 
 /** Core runtime WASM — ships inside the web-tree-sitter package itself. */

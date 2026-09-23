@@ -114,11 +114,30 @@ describe("buildGraph — input validation", () => {
     await expect(buildGraph(missing)).rejects.toThrow(/does-not-exist/);
   });
 
-  it("throws a clear Error for a folder with no TypeScript source files", async () => {
+  it("throws a clear Error for a folder with no supported source files", async () => {
     const empty = makeTempDir("citycode-bg-empty-");
     dirs.push(empty);
 
-    await expect(buildGraph(empty)).rejects.toThrow(/no TypeScript source files/);
+    await expect(buildGraph(empty)).rejects.toThrow(/no supported source files/);
     await expect(buildGraph(empty)).rejects.toThrow(/citycode-bg-empty-/);
+  });
+
+  it("explains itself when the folder holds only unparseable code (e.g. plain .js)", async () => {
+    const jsRepo = makeTempDir("citycode-bg-jsclone-");
+    dirs.push(jsRepo);
+    writeFiles(jsRepo, [
+      { path: "main.js", contents: "var x = 1;\n" },
+      { path: "util.js", contents: "var y = 2;\n" },
+      { path: "README.md", contents: "# js repo\n" },
+    ]);
+
+    const error = await buildGraph(jsRepo).then(
+      () => null,
+      (e: Error) => e,
+    );
+    if (error === null) throw new Error("expected buildGraph to throw");
+    expect(error.message).toMatch(/no supported source files/);
+    expect(error.message).toMatch(/2 \.js/);
+    expect(error.message).toMatch(/TypeScript\/TSX and Python/);
   });
 });

@@ -41,7 +41,7 @@ interface ParsedFile {
  * the path in the message; one weird file never crashes the build — unreadable
  * or parse-failing files are skipped and reported as warnings.
  */
-export async function buildGraph(root: string): Promise<BuildGraphResult> {
+export async function buildGraph(root: string, source: CodeGraph["source"] = "local"): Promise<BuildGraphResult> {
   const absoluteRoot = path.resolve(root);
 
   let stat: fs.Stats;
@@ -54,9 +54,17 @@ export async function buildGraph(root: string): Promise<BuildGraphResult> {
     throw new Error(`CityCode: input path is not a folder: ${absoluteRoot}`);
   }
 
-  const sourceFiles = walkSourceFiles(absoluteRoot);
+  const { files: sourceFiles, otherCodeFiles } = walkSourceFiles(absoluteRoot);
   if (sourceFiles.length === 0) {
-    throw new Error(`CityCode: no TypeScript source files (.ts/.tsx) found in ${absoluteRoot}`);
+    const otherEntries = Object.entries(otherCodeFiles).sort(([a], [b]) => (a < b ? -1 : 1));
+    const otherSummary = otherEntries.map(([ext, count]) => `${count} ${ext}`).join(", ");
+    throw new Error(
+      `CityCode: no supported source files (.ts/.tsx/.py) found in ${absoluteRoot}` +
+        (otherSummary
+          ? ` — the folder does contain code CityCode cannot parse yet (${otherSummary}); ` +
+            "CityCode currently supports TypeScript/TSX and Python."
+          : ""),
+    );
   }
 
   const repoInfo = await getRepoInfo(absoluteRoot);
@@ -110,7 +118,7 @@ export async function buildGraph(root: string): Promise<BuildGraphResult> {
     edges,
     headSha: repoInfo.headSha,
     repoPath: absoluteRoot.split(path.sep).join("/"),
-    source: "local",
+    source,
   };
   return { graph, warnings };
 }

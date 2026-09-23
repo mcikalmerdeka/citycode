@@ -45,31 +45,37 @@ Reference document for build decisions. Versions reflect latest stable releases 
 
 ## 5. Code Parsing
 
+> **Updated 2026-09-24:** Python is now a supported second language — `tree-sitter-python`'s own prebuilt WASM loads alongside TypeScript (same mechanism as the Spike A finding). `.py` files join the walker allowlist; Python imports resolve repo-root-anchored (dotted paths + package `__init__.py`), relative imports from the importer's package; third-party modules are recorded as external. All layers downstream of the parser (layout, scene, compares, snapshots) are language-agnostic and unchanged.
+
 | Task | Tool | Notes |
 |---|---|---|
-| Parse source into an AST / symbol graph | `web-tree-sitter` (WASM build of tree-sitter) | Runs directly inside Node/Next.js, no Python dependency needed. Language grammars (e.g. `tree-sitter-typescript`, `tree-sitter-python`) load as WASM files. |
-| Build the file/function/import graph | Custom logic on top of tree-sitter's parse trees | This becomes your core "graph model" — the shared shape that both the static view and both compare modes render from. |
+| Parse source into an AST / symbol graph | `web-tree-sitter` (WASM build of tree-sitter) | Runs directly inside Node/Next.js, no Python dependency needed. Language grammars (e.g. `tree-sitter-typescript`, `tree-sitter-python`) load as WASM files — from each grammar package's own prebuild, never from `tree-sitter-wasms`. |
+| Build the file/function/import graph | Custom logic on top of tree-sitter's parse trees | This becomes the core "graph model" — the shared shape that the static view, both compare modes, and (Phase 6) snapshots render from. Languages today: TypeScript/TSX + Python; grammar already ships for JS if a third language is ever wanted. |
 
 ## 6. LLM Layer
 
+> **Updated 2026-09-24 (Phase 3):** the provider was switched from OpenCode's OpenAI-compatible endpoint to the **standard OpenAI endpoint** — OpenCode Go additionally required an `x-opencode-session` header and an active subscription, which wasn't worth the complexity for single-shot summaries. Model is now `gpt-6-luna` (released 2026-09-22) with `reasoning_effort: "medium"`; the only env var needed is `OPENAI_API_KEY`.
+
 | Component | Choice | Notes |
 |---|---|---|
-| Provider | OpenCode's OpenAI-compatible chat endpoint | Custom `baseURL`, not Azure OpenAI. |
-| Model | GLM 5.3 Flash | Set via the `model` field in each request. |
-| SDK | `openai` npm package | The official OpenAI SDK works against any OpenAI-compatible endpoint — just set `baseURL` to OpenCode's endpoint and pass your API key/config for it. No LangGraph or orchestration framework needed for this — it's single-shot "summarize this file/diff" calls, not a multi-step agent. |
-| Usage | Two call types | (1) Per-file/function explanation on click, generated once and cached in the saved snapshot. (2) One diff-summary call per compare view (HEAD vs. HEAD~1, or HEAD vs. working directory). |
+| Provider | **Standard OpenAI API** (`api.openai.com`) | Started as OpenCode's OpenAI-compatible endpoint; switched during Phase 3 (see the note above). |
+| Model | `gpt-6-luna` | Released 2026-09-22. Reasoning effort **medium** via `reasoning_effort` (Chat Completions). With reasoning ≠ `none`, Chat Completions rejects `temperature`/`top_p` — CityCode omits both, and no token cap is forced (the prompt itself is size-capped). |
+| SDK | `openai` npm package | Official SDK against the real OpenAI endpoint — no custom `baseURL` needed anymore. |
+| Usage | Two call types | (1) Per-file explanation on click, generated once and cached per `(repoKey, headSha, fileId)` in-memory (Phase 3), persisted into snapshots (Phase 6). (2) One diff-summary call per compare view (Phase 4/5). |
 
-Example client setup:
+Model/endpoint/effort are pinned **in code** (`lib/llm/client.ts` exports `LLM_MODEL` / `LLM_REASONING_EFFORT`); only the API key comes from env.
+
+Example client setup (as implemented in `lib/llm/client.ts`):
 ```ts
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "<opencode-endpoint-url>",
-  apiKey: process.env.OPENCODE_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 const response = await client.chat.completions.create({
-  model: "glm-5.3-flash",
+  model: "gpt-6-luna",
+  reasoning_effort: "medium",
   messages: [{ role: "user", content: "..." }],
 });
 ```

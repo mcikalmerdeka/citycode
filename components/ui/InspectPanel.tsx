@@ -11,6 +11,7 @@ import { useMemo } from "react";
 
 import type { CodeGraph, ImportEdge, SymbolDef } from "@/lib/types";
 import { useCityStore } from "@/lib/store";
+import { ExplainPanel } from "./ExplainPanel";
 
 /** A file linked to the selection by one or more import edges. */
 interface LinkedFile {
@@ -98,7 +99,13 @@ function FileLinkList({
   );
 }
 
-export function InspectPanel({ graph }: { graph: CodeGraph | null }) {
+export function InspectPanel({
+  graph,
+  repoKey,
+}: {
+  graph: CodeGraph | null;
+  repoKey: string | null;
+}) {
   const selectedId = useCityStore((state) => state.selectedId);
   const select = useCityStore((state) => state.select);
 
@@ -189,6 +196,10 @@ export function InspectPanel({ graph }: { graph: CodeGraph | null }) {
             ))}
           </ul>
         </section>
+      )}
+
+      {repoKey !== null && selectedId !== null && (
+        <ExplainPanel repoKey={repoKey} fileId={selectedId} />
       )}
 
       <FileLinkList

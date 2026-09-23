@@ -22,11 +22,12 @@ const SKIPPED_DIRS: ReadonlySet<string> = new Set([
 /**
  * Extension allowlist — the ONLY extensions that can become graph nodes.
  * An allowlist (not a denylist) means binaries and assets can never sneak in.
- * Phase 1 scope: TypeScript only; other extensions are a documented limitation.
+ * Supports TypeScript/TSX and Python (Phase 5.5 addition, Python stretch item).
  */
 const SOURCE_EXTENSIONS: Readonly<Record<string, FileLanguage>> = {
   ".ts": "typescript",
   ".tsx": "tsx",
+  ".py": "python",
 };
 
 /** One discovered source file. */
@@ -40,6 +41,16 @@ export interface SourceFile {
 }
 
 /**
+ * Code extensions from OTHER languages CityCode does not support yet —
+ * used only for diagnostics in the "no .ts/.tsx found" error message
+ * (e.g. a cloned Python repo should explain itself).
+ */
+const OUTER_CODE_EXTENSIONS: ReadonlySet<string> = new Set([
+  ".js", ".jsx", ".mjs", ".cjs", ".java", ".go", ".rb", ".rs", ".cs",
+  ".cpp", ".c", ".swift", ".kt", ".php",
+]);
+
+/**
  * Recursively walk a local folder and collect every .ts/.tsx source file.
  *
  * Determinism: directory entries are enumerated in sorted order and the final
@@ -49,15 +60,28 @@ export interface SourceFile {
  * Robustness: an unreadable subfolder is skipped rather than crashing the
  * walk. Symbolic links are not followed (neither directories nor files) —
  * that avoids cycles and keeps output deterministic.
+ *
+ * Returns one pass: `files` are the parseable sources; `otherCodeFiles`
+ * counts known non-TS code extensions (a cloned Python repo explains why it
+ * can't render instead of an opaque "no .ts/.tsx found").
  */
-export function walkSourceFiles(root: string): SourceFile[] {
+export function walkSourceFiles(root: string): {
+  files: SourceFile[];
+  otherCodeFiles: Record<string, number>;
+} {
   const files: SourceFile[] = [];
-  walk(root, "", files);
+  const otherCodeFiles: Record<string, number> = {};
+  walk(root, "", files, otherCodeFiles);
   files.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return files;
+  return { files, otherCodeFiles };
 }
 
-function walk(dir: string, relDir: string, files: SourceFile[]): void {
+function walk(
+  dir: string,
+  relDir: string,
+  files: SourceFile[],
+  otherCodeFiles: Record<string, number>,
+): void {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -72,10 +96,14 @@ function walk(dir: string, relDir: string, files: SourceFile[]): void {
         continue;
       }
       const childRel = relDir === "" ? entry.name : `${relDir}/${entry.name}`;
-      walk(path.join(dir, entry.name), childRel, files);
+      walk(path.join(dir, entry.name), childRel, files, otherCodeFiles);
     } else if (entry.isFile()) {
-      const language = SOURCE_EXTENSIONS[path.extname(entry.name).toLowerCase()];
+      const ext = path.extname(entry.name).toLowerCase();
+      const language = SOURCE_EXTENSIONS[ext];
       if (language === undefined) {
+        if (OUTER_CODE_EXTENSIONS.has(ext)) {
+          otherCodeFiles[ext] = (otherCodeFiles[ext] ?? 0) + 1;
+        }
         continue;
       }
       const id = relDir === "" ? entry.name : `${relDir}/${entry.name}`;

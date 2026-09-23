@@ -102,7 +102,7 @@ export default function Home() {
           )}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <InspectPanel graph={result?.graph ?? null} />
+          <InspectPanel graph={result?.graph ?? null} repoKey={result?.repoKey ?? null} />
         </div>
       </aside>
 
