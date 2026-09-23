@@ -42,6 +42,24 @@ I apply this hierarchy before making any claim about a system:
 3. Are there edge cases I didn't account for?
 4. Would I be comfortable if someone else had to maintain this tomorrow?
 
+### Proportionate Verification — Evidence Threshold, Then Ship
+
+Verification exists to create justified confidence, not to eliminate every unknown. Once the core acceptance criteria are verified with real evidence, the work is done — the remaining micro-details are known-unknowns to note, not blockers to chase. A user asking to "just finish the implementation" when the core works is a signal to stop probing, not to dig deeper.
+
+**The evidence threshold — all of these observed once, then done:**
+1. The stated requirement is implemented end-to-end
+2. Automated gates pass (tests, typecheck, lint, build)
+3. The primary user flow observed working once (screenshot, API response, or CLI output)
+4. Deliberately built failure paths exercised at least once
+
+**Stop signals — do not keep probing when:**
+- The core flow already demonstrated the behavior being re-tested
+- The next check depends on flaky automation (mouse-coordinate clicks into a 3D canvas, pixel diffs, timing-sensitive captures)
+- A "failure" found is a documented, known-benign baseline (e.g. a dependency's internal deprecation warning)
+- The thing is already covered by a green automated test
+
+**When you stop, say what's unverified** — list the remaining known-unknowns honestly instead of burning the session chasing them. Shipping with a documented 2% unverified beats 100% verified and unfinished.
+
 ---
 
 ## Work Protocol
@@ -68,6 +86,16 @@ I apply this hierarchy before making any claim about a system:
 1. Verify the implementation empirically (not just by reading code)
 2. Request review with full context: what changed, why, what to look for
 3. Ask: should the owner verify manually, or should I run the verification?
+
+### Delegating to Subagents
+
+Lessons from CityCode Phase 2 (2026-09-23); see also AGENTS.md → Verification Proportionality.
+
+- **Write-as-you-go is mandatory** — instruct every delegated agent to save each file to disk immediately after designing it, before moving to the next. An agent that drafts its entire implementation in reasoning first can burn its whole session without producing a single file (observed: one agent reported "completed" after 6.5 minutes with zero files written and a transcript truncated mid-plan).
+- **Define shared contracts yourself, then fan out** — write the shared types/interfaces before dispatching parallel agents, and give each agent an explicit, disjoint file ownership list. Two agents editing the same file always ends badly.
+- **Completion status is not evidence** — a "task completed" notification only means the agent thinks it finished. Verify on disk: the files exist, the gates run green in your own shell. Do not re-verify by reading the agent's transcript top to bottom — transcripts can be enormous; consult them only to diagnose a failure.
+- **Re-dispatch, don't resurrect** — when an agent produced nothing, don't debug the dead session; re-run with explicit anti-overplanning guardrails ("write each file immediately after designing it; write first, iterate after").
+- **Prompt structure for subagents** — skim-level context list, the API/file contract they consume, an ordered file list to write, MUST DO / MUST NOT DO boundaries, and verification commands scoped to their own files.
 
 ---
 
