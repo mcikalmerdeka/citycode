@@ -51,6 +51,8 @@ next-env.d.ts
 
 # Other
 other/
+.omo/
+.playwright-mcp/
 
 # pnpm lockfile SHOULD be committed - do not ignore it
 

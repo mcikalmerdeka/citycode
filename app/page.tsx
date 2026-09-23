@@ -1,68 +1,128 @@
-import Image from "next/image";
+"use client";
+
+/**
+ * CityCode home — a two-pane app shell: the import/inspect column on the
+ * left, the 3D city (or the metaphor explainer) on the right.
+ *
+ * The scene is loaded via next/dynamic with ssr:false (WebGL is
+ * client-only), which is legal here because this module is a client
+ * component. A fresh analysis result always clears the selection so the
+ * inspect panel can never show a file from a previous city.
+ */
+
+import dynamic from "next/dynamic";
+import { useCallback, useState } from "react";
+
+import { Legend } from "@/components/city/Legend";
+import { ImportForm, type AnalyzeResponse } from "@/components/ui/ImportForm";
+import { InspectPanel } from "@/components/ui/InspectPanel";
+import { useCityStore } from "@/lib/store";
+
+const CityScene = dynamic(
+  () => import("@/components/city/CityScene").then((mod) => mod.CityScene),
+  { ssr: false },
+);
+
+function EmptyState() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-7 px-8 text-center">
+      {/* Mini skyline on a district block — the metaphor, in miniature */}
+      <div aria-hidden="true" className="flex flex-col items-center">
+        <div className="flex items-end gap-1.5">
+          <span className="h-6 w-3 rounded-[1px] bg-[#8b8d98]/60" />
+          <span className="h-10 w-4 rounded-[1px] bg-[#8b8d98]" />
+          <span className="h-4 w-2.5 rounded-[1px] bg-[#8b8d98]/40" />
+          <span className="h-14 w-5 rounded-[1px] bg-[#8b8d98]" />
+          <span className="h-8 w-3 rounded-[1px] bg-[#8b8d98]/70" />
+          <span className="h-5 w-2 rounded-[1px] bg-[#8b8d98]/50" />
+        </div>
+        <div className="mt-1 h-1.5 w-[130%] rounded-[1px] border border-[#3f424c] bg-[#2a2c33]" />
+      </div>
+      <div className="max-w-sm space-y-3">
+        <h2 className="text-xl font-semibold tracking-tight text-zinc-100">
+          See your codebase as a city
+        </h2>
+        <p className="text-sm leading-relaxed text-zinc-400">
+          Every file becomes a building — its height is lines of code, its
+          footprint the number of functions. Folders frame their files as city
+          blocks, and imports run between buildings as roads.
+        </p>
+        <p className="text-xs leading-relaxed text-zinc-600">
+          Enter a local folder path on the left to build your first city.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 export default function Home() {
+  const [result, setResult] = useState<AnalyzeResponse | null>(null);
+  const select = useCityStore((state) => state.select);
+  const showLabels = useCityStore((state) => state.showLabels);
+  const toggleLabels = useCityStore((state) => state.toggleLabels);
+
+  const handleSuccess = useCallback(
+    (data: AnalyzeResponse) => {
+      setResult(data);
+      select(null);
+    },
+    [select],
+  );
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="flex h-dvh overflow-hidden bg-zinc-950 font-sans text-zinc-100">
+      <aside className="flex w-80 shrink-0 flex-col border-r border-zinc-800/70 bg-zinc-900/30">
+        <div className="border-b border-zinc-800/70 p-4">
+          <div className="flex items-baseline justify-between">
+            <p className="font-mono text-xs font-semibold uppercase tracking-[0.3em] text-zinc-200">
+              CityCode
+            </p>
+            <span className="rounded border border-zinc-700/70 px-1 py-px font-mono text-[9px] uppercase tracking-wider text-zinc-500">
+              static
+            </span>
+          </div>
+          <ImportForm onSuccess={handleSuccess} />
+          {result && result.warnings.length > 0 && (
+            <div className="mt-4">
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                Warnings ({result.warnings.length})
+              </p>
+              <ul className="mt-1.5 max-h-36 space-y-1 overflow-y-auto pr-1">
+                {result.warnings.map((warning) => (
+                  <li
+                    key={`${warning.path}:${warning.message}`}
+                    className="text-[11px] leading-snug text-zinc-500"
+                  >
+                    <span className="font-mono text-zinc-400">{warning.path}</span>{" "}
+                    — {warning.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <InspectPanel graph={result?.graph ?? null} />
         </div>
+      </aside>
+
+      <main className="relative min-w-0 flex-1">
+        {result ? (
+          <>
+            <CityScene layout={result.layout} />
+            <Legend />
+            <button
+              type="button"
+              onClick={toggleLabels}
+              aria-pressed={showLabels}
+              className="absolute right-3 top-3 z-20 rounded-md border border-zinc-700/80 bg-zinc-900/80 px-2.5 py-1 text-[11px] font-medium text-zinc-400 backdrop-blur transition-colors hover:text-zinc-200 aria-pressed:border-zinc-100 aria-pressed:bg-zinc-100 aria-pressed:text-zinc-950"
+            >
+              Labels
+            </button>
+          </>
+        ) : (
+          <EmptyState />
+        )}
       </main>
     </div>
   );

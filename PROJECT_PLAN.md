@@ -109,7 +109,7 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 
 ---
 
-## Phase 2 — City Layout + Static 3D View ⬜ (0%)
+## Phase 2 — City Layout + Static 3D View ✅ (100%)
 
 **Goal:** An imported local folder renders as an interactive, deterministic 3D city with districts, buildings sized by code, and roads for imports — this validates the core metaphor (PRD milestone 1).
 
@@ -137,20 +137,22 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 | **Color** | **Reserved entirely for compare status** (Phase 4/5) | Never encode size/type in color |
 
 ### Tasks
-- [ ] `CityLayout` types: `Building { fileId, x, z, w, d, h }`, `District { path, x, z, w, d, label }`, `Road { fromId, toId, points[] }`
-- [ ] Layout algorithm: recursive treemap per folder (sorted by path — determinism is a hard requirement, no unseeded randomness), buildings placed inside their district; entry-point files (e.g. `index.ts`, `main.ts`) could get a "city hall" scale boost — decide during implementation, keep it deterministic
-- [ ] `Roads.tsx`: ground-level polylines between connected buildings (fancy elevated highways are a stretch — keep Phase 2 simple)
-- [ ] `CityScene.tsx`: canvas + `OrbitControls` (drei), instanced meshes for buildings, click → raycast → select
-- [ ] `lib/store.ts` + `InspectPanel.tsx`: selection state; panel shows path, LOC, function list, importers/importees
-- [ ] `app/api/analyze/route.ts` + TanStack Query hook (`useAnalyzeRepo`): loading/error states during clone/parse
-- [ ] `ImportForm.tsx`: local-path mode only (GitHub tab arrives in Phase 3)
-- [ ] `Legend.tsx`: visible in every view mode
+- [x] `CityLayout` types: `Building { fileId, x, z, w, d, h }`, `District { path, x, z, w, d, label }`, `Road { fromId, toId, points[] }` — in `lib/city/layout.ts` (plus `CityLayoutOptions` with documented defaults and `CityLayout.repoPath`)
+- [x] Layout algorithm: **squarified treemap** (Bruls et al. 2000) per folder — chosen over slice-and-dice for bounded aspect ratios, with a total-order sort (area desc, key asc) making input array order irrelevant; buildings placed inside their district; root rect fixed 4:3 landscape, W·D = totalArea, centered on origin. **Decision: no "city hall" boost** — height encodes LOC only (PRD §10 one-property-one-meaning contract outranks the entry-point flourish); footprint carries the symbol-count nod via aspect = √(max(1, fnCount)), clamped into the cell so containment always wins
+- [x] `Roads.tsx`: ground-level polylines between connected buildings at y=0.35 (drei `<Line>`, lineWidth 2) — elevated highways deferred as planned
+- [x] `CityScene.tsx`: canvas + `OrbitControls` (drei, damping), instanced meshes for buildings (drei `<Instances>`), click → raycast → select via store; `onPointerMissed` deselects; selected building gets a ×1.02 emissive overlay mesh (no z-fighting, base at ground)
+- [x] `lib/store.ts` + `InspectPanel.tsx`: selection state (`selectedId`, `compareMode` fixed "static" until Phase 4/5, `showLabels`); panel shows path, LOC, language, function list, importers/importees (deduped, ×N badges, clickable rows)
+- [x] `app/api/analyze/route.ts` (`runtime = "nodejs"`, POST `{ source: "local", path }` → `{ graph, layout, warnings }`, everything maps to 400 `{ error }` — never a 500) + typed mutation in `ImportForm` with runtime type guards (no zod, no new deps)
+- [x] `ImportForm.tsx`: local-path mode only (GitHub tab arrives in Phase 3, noted in UI)
+- [x] `Legend.tsx`: visible in every view mode (always-on overlay: height/footprint/block/road/highlight + "color is reserved for compare mode")
+- [x] Response parsing is guard-typed (`isAnalyzeResponse`), page is `"use client"` with `next/dynamic ssr:false` for the R3F canvas; district labels via drei `<Html>` with `pointerEvents: none` (never blocks orbit)
 
 ### Acceptance
-1. Import a small local folder → city renders: districts labeled, building height ∝ LOC, roads connect importing→imported
-2. Click any building → inspect panel updates with that file's details; legend visible
-3. Import the same repo twice → **pixel-identical layout** (determinism gate for compare modes)
-4. Orbit/zoom/pan camera works; dev console clean; `pnpm build` green
+1. ✅ Import a local folder → city renders: districts labeled (drei Html labels), building height ∝ LOC, roads connect importing→imported (verified in browser: self-repo → 29 buildings, 12 districts, 42 roads)
+2. ✅ Click any building → inspect panel updates with that file's details (path/LOC/functions/importers); legend visible (verified in browser; highlight = ×1.02 emissive overlay)
+3. ✅ Import the same repo twice → **pixel-identical layout** — `/api/analyze` responses byte-identical across consecutive runs on both `tests/` (6,862 B) and the full self-repo (26,016 B)
+4. ✅ Orbit/zoom/pan camera works (OrbitControls, damping); dev console clean — 0 errors, only the known-benign R3F-internal `THREE.Clock` deprecation (same baseline as Phase 0 Spike B); `pnpm build` green (Turbopack, `/api/analyze` registered dynamic)
+5. ✅ `pnpm test` 51/51 (21 new layout tests: determinism, containment, sortedness, no-NaN, height/footprint formulas, road endpoints, defensive unsorted-input invariance), `pnpm lint` clean, `npx tsc --noEmit` clean
 
 ---
 
@@ -332,7 +334,7 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 
 ## Currently Working On
 
-**Phase 2 — City Layout + Static 3D View.** Phase 1 complete (2026-09-23): all six modules landed, 30/30 tests green, build/lint/tsc clean, determinism + dogfood acceptance verified. First actions: define `CityLayout` types in `lib/city/layout.ts`, then the treemap layout function, then `components/city/` R3F components consuming `CodeGraph` via `app/api/analyze/route.ts`.
+**Phase 3 — GitHub Import + LLM Click-to-Inspect.** Phase 2 complete (2026-09-23): squarified treemap layout engine + R3F city scene landed, 51/51 tests green, byte-identical determinism verified over HTTP, browser acceptance passed (render/inspect/legend/orbit/console). First actions: `lib/git/clone.ts` + `lib/git/url.ts`, then the LLM client (`lib/llm/client.ts` + `prompts.ts`), then `/api/explain` and the GitHub tab in `ImportForm.tsx` feeding the same `/api/analyze` pipeline with `source: "github"`.
 
 ## Quick Status
 
@@ -340,7 +342,7 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 |---|---|---|---|
 | 0 | Setup & technical validation | ✅ | 100 |
 | 1 | Graph model + local ingestion | ✅ | 100 |
-| 2 | City layout + static 3D view | ⬜ | 0 |
+| 2 | City layout + static 3D view | ✅ | 100 |
 | 3 | GitHub import + LLM inspect | ⬜ | 0 |
 | 4 | Compare: HEAD vs. HEAD~1 | ⬜ | 0 |
 | 5 | Compare: HEAD vs. workdir | ⬜ | 0 |

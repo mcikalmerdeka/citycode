@@ -15,7 +15,14 @@
 #            extract.ts    file → functions + import statements
 #            resolve.ts    ./../ imports → intra-repo edges (bare/alias never edges)
 #            buildGraph.ts folder → CodeGraph (deterministic, byte-identical JSON)
-#   city/    (Phase 2) graph model → city layout (buildings, districts, roads)
+#   city/    graph model → city layout. Implemented: layout.ts — CityLayout
+#            types (Building/District/Road) + computeCityLayout(): deterministic
+#            squarified treemap (Bruls et al. 2000), total-order sorted (area
+#            desc, key asc), root rect 4:3 centered on origin, footprint
+#            ∝ LOC with a √fnCount aspect nod clamped into the cell, height =
+#            max(0.5, loc·heightPerLoc), roads = one per edge at building
+#            centers. Consumed by components/city/ (R3F scene) via
+#            /api/analyze; persisted by Phase 6 snapshots.
 #   llm/     (Phase 3) OpenCode GLM client (openai SDK, baseURL from env) + summary prompts
 #
 # types.ts holds the shared graph model (CodeGraph/FileNode/SymbolDef/
