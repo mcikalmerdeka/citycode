@@ -8,10 +8,12 @@
  * - Static view: ONE uniform color for every building. Hue is reserved for
  *   compare modes; per-building color variation is forbidden there.
  * - Compare view (Phase 4): per-instance colors by change status — orange
- *   construction sites, lime fresh builds, red blast-radius tint. A change
- *   status and the selection may co-exist: the status recolors the instance
- *   while selection stays the ×1.02 emissive overlay (never two colors on
- *   the same property — selection never carries hue, only glow).
+ *   construction sites, lime fresh builds, red blast-radius tint. Phase 5
+ *   adds the "foundation" treatment: untracked files flatten into low pale
+ *   slabs (same property, same rules). A change status and the selection
+ *   may co-exist: the status recolors the instance while selection stays
+ *   the ×1.02 emissive overlay (never two colors on the same property —
+ *   selection never carries hue, only glow).
  */
 
 import { useMemo } from "react";
@@ -33,10 +35,14 @@ const SELECTION_SCALE = 1.02;
 export const STATUS_COLORS: Record<NodeStatus, string> = {
   construction: "#f59e0b", // amber — modified, construction site
   fresh: "#a3e635", // lime — added, fresh construction
+  foundation: "#e2e8f0", // pale slate — untracked, freshly-poured foundation
   rubble: "#57534e", // warm grey — deleted, rubble (slab, not a building)
   moved: "#22d3ee", // cyan — renamed, moved marker
   blast: "#ef4444", // red — transitive importer of a changed file
 };
+
+/** Foundation slab height — fixed low: deliberately "not yet a building". */
+const FOUNDATION_H = 0.9;
 
 export function Buildings({
   buildings,
@@ -53,38 +59,39 @@ export function Buildings({
     [buildings, selectedId],
   );
 
-  const colorOf = (building: Building): string => {
-    const change = changes?.get(building.fileId);
-    // Rubble nodes are never buildings (deleted files have no HEAD layout
-    // entry) — the defensive fallthrough keeps any unexpected shape neutral.
-    return change === undefined ? BUILDING_COLOR : STATUS_COLORS[change.status];
-  };
-
   return (
     <group>
       {buildings.length > 0 && (
         <Instances limit={buildings.length} range={buildings.length}>
           <boxGeometry />
           <meshStandardMaterial roughness={0.85} metalness={0} />
-          {buildings.map((building) => (
-            <Instance
-              key={building.fileId}
-              color={colorOf(building)}
-              position={[building.x, building.h / 2, building.z]}
-              scale={[building.w, building.h, building.d]}
-              onClick={(event: ThreeEvent<MouseEvent>) => {
-                event.stopPropagation();
-                select(building.fileId);
-              }}
-              onPointerOver={(event: ThreeEvent<PointerEvent>) => {
-                event.stopPropagation();
-                document.body.style.cursor = "pointer";
-              }}
-              onPointerOut={() => {
-                document.body.style.cursor = "auto";
-              }}
-            />
-          ))}
+          {buildings.map((building) => {
+            const status = changes?.get(building.fileId)?.status;
+            // Untracked files exist as full-height layout buildings — the
+            // foundation treatment flattens them into a low slab in place
+            // (PRD §6: fresh foundation, not yet a full building).
+            const isFoundation = status === "foundation";
+            const h = isFoundation ? Math.min(building.h, FOUNDATION_H) : building.h;
+            return (
+              <Instance
+                key={building.fileId}
+                color={status === undefined ? BUILDING_COLOR : STATUS_COLORS[status]}
+                position={[building.x, h / 2, building.z]}
+                scale={[building.w, h, building.d]}
+                onClick={(event: ThreeEvent<MouseEvent>) => {
+                  event.stopPropagation();
+                  select(building.fileId);
+                }}
+                onPointerOver={(event: ThreeEvent<PointerEvent>) => {
+                  event.stopPropagation();
+                  document.body.style.cursor = "pointer";
+                }}
+                onPointerOut={() => {
+                  document.body.style.cursor = "auto";
+                }}
+              />
+            );
+          })}
         </Instances>
       )}
 

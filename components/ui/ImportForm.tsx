@@ -146,7 +146,7 @@ function isNodeChange(value: unknown): value is ChangeSet["changes"][number] {
   return (
     isRecord(value) &&
     isStr(value.fileId) &&
-    ["construction", "fresh", "rubble", "moved", "blast"].includes(String(value.status)) &&
+    ["construction", "fresh", "rubble", "moved", "blast", "foundation"].includes(String(value.status)) &&
     (value.oldPath === undefined || isStr(value.oldPath))
   );
 }
@@ -162,7 +162,9 @@ function isChangeSet(value: unknown): value is ChangeSet {
     isNum(value.counts.modified) &&
     isNum(value.counts.added) &&
     isNum(value.counts.deleted) &&
-    isNum(value.counts.renamed)
+    isNum(value.counts.renamed) &&
+    isNum(value.counts.untracked) &&
+    (value.workdirHash === undefined || isStr(value.workdirHash))
   );
 }
 

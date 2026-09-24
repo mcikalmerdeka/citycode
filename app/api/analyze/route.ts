@@ -2,11 +2,18 @@ import { NextResponse } from "next/server";
 import { computeCityLayout, type CityLayout } from "@/lib/city/layout";
 import { cloneRepo } from "@/lib/git/clone";
 import { diffCommits, type CommitDiff } from "@/lib/git/diff";
+import { workdirDiff, type WorkdirDiff } from "@/lib/git/workdir";
 import { parseGitHubUrl } from "@/lib/git/url";
-import { applyCommitDiff, type ChangeSet } from "@/lib/diff/apply";
+import { applyCommitDiff, applyWorkdirDiff, type ChangeSet } from "@/lib/diff/apply";
 import { buildGraph, type BuildGraphResult } from "@/lib/parser/buildGraph";
 import { computeRepoKey } from "@/lib/repoKey";
-import { storeGraph, storeAnalysis, getStoredAnalysis, storeCommitDiff } from "@/lib/llm/graphCache";
+import {
+  storeGraph,
+  storeAnalysis,
+  getStoredAnalysis,
+  storeCommitDiff,
+  storeWorkdirDiff,
+} from "@/lib/llm/graphCache";
 
 /**
  * POST /api/analyze — the single ingestion entry point: local folder or
@@ -16,14 +23,17 @@ import { storeGraph, storeAnalysis, getStoredAnalysis, storeCommitDiff } from "@
  * (determinism contract). A successful response also stores the analysis
  * server-side (keyed by repoKey) and reports the key back.
  *
- * Phase 4 adds `mode`:
+ * Phase 4 added `mode: "prev"`; Phase 5 adds `mode: "workdir"`:
  * - "static" (default) — the plain render, unchanged shape.
  * - "prev" — the HEAD vs. HEAD~1 compare. When a `repoKey` of this server
  *   run is passed, the stored graph + layout are reused verbatim (zero
  *   layout shift, no re-parse) and only the commit diff is computed; the
  *   response carries the same { graph, layout } plus `changeSet`. Without a
  *   usable repoKey it falls back to a fresh build and compare-closes anyway.
- * - "workdir" — Phase 5; rejected with a readable message for now.
+ * - "workdir" — the HEAD vs. working-directory compare ("what am I about to
+ *   commit"). Same reuse: the stored analysis's graph + layout come back
+ *   verbatim and only the workdir diff is computed. Cold runs build the
+ *   graph from disk first (the on-disk tree IS the workdir state).
  *
  * Every failure here is a user-input problem — bad JSON, wrong source field,
  * missing path, unreadable folder, bad GitHub URL, clone failure, empty
@@ -62,17 +72,20 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 400 },
     );
   }
-  if (mode === "workdir") {
-    return NextResponse.json(
-      {
-        error:
-          "CityCode: working-directory compare (about to commit) is not available yet — it arrives with the next phase.",
-      },
-      { status: 400 },
-    );
-  }
 
-  const compare = mode === "prev";
+  const compare = mode === "prev" || mode === "workdir";
+
+  const diffAndClassify = async (
+    repoPath: string,
+    graph: BuildGraphResult["graph"],
+  ): Promise<{ changeSet: ChangeSet; diff?: CommitDiff; workdirDiff?: WorkdirDiff }> => {
+    if (mode === "workdir") {
+      const wd = await workdirDiff(repoPath);
+      return { changeSet: applyWorkdirDiff(graph, wd), workdirDiff: wd };
+    }
+    const d = await diffCommits(repoPath);
+    return { changeSet: applyCommitDiff(graph, d), diff: d };
+  };
 
   // Compare mode with a warm cache: reuse the exact stored analysis so the
   // layout sent back is the very same JSON the static view already rendered.
@@ -80,15 +93,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     const reused = getStoredAnalysis(repoKey);
     if (reused !== undefined) {
       try {
-        const diff = await diffCommits(reused.graph.repoPath);
-        const changeSet = applyCommitDiff(reused.graph, diff);
-        storeCommitDiff(repoKey, diff);
+        const { changeSet, diff, workdirDiff: wd } = await diffAndClassify(reused.graph.repoPath, reused.graph);
+        if (wd !== undefined) storeWorkdirDiff(repoKey, wd);
+        if (diff !== undefined) storeCommitDiff(repoKey, diff);
         return NextResponse.json(
           { graph: reused.graph, layout: reused.layout, warnings: reused.warnings, repoKey, changeSet },
           { status: 200 },
         );
       } catch (error) {
-        const message = error instanceof Error ? error.message : "CityCode: commit diff failed";
+        const message = error instanceof Error ? error.message : "CityCode: compare failed";
         return NextResponse.json({ error: message }, { status: 400 });
       }
     }
@@ -102,11 +115,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     storeAnalysis({ graph: built.graph, layout: built.layout, warnings: built.warnings });
 
     let changeSet: ChangeSet | undefined;
-    let diff: CommitDiff | undefined;
     if (compare) {
-      diff = await diffCommits(built.graph.repoPath);
-      changeSet = applyCommitDiff(built.graph, diff);
-      storeCommitDiff(key, diff);
+      const { changeSet: set, diff, workdirDiff: wd } = await diffAndClassify(built.graph.repoPath, built.graph);
+      changeSet = set;
+      if (diff !== undefined) storeCommitDiff(key, diff);
+      if (wd !== undefined) storeWorkdirDiff(key, wd);
     }
 
     return NextResponse.json(

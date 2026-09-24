@@ -11,6 +11,9 @@
  *   commit always renders identically.
  * - Cyan moved-from→moved-to ground lines for renames: origin spot computed
  *   the same rubble way (the old path has no building in the HEAD layout).
+ * - (Phase 5) Pale foundation slabs for untracked files with no building in
+ *   the captured layout; untracked files that ARE in the layout are flipped
+ *   into low slabs by Buildings.tsx instead.
  *
  * Everything here is a pure function of { layout, changeSet } — the compare
  * view must never shift the underlying layout (PRD risk §11), only decorate
@@ -31,6 +34,10 @@ import { STATUS_COLORS } from "./Buildings";
 const RUBBLE_W = 6;
 const RUBBLE_D = 6;
 const RUBBLE_H = 0.7;
+/** Foundation slabs: taller than rubble but clearly not a building (Phase 5). */
+const FOUNDATION_W = 6;
+const FOUNDATION_D = 6;
+const FOUNDATION_H = 0.9;
 /** Deterministic per-file offset inside the parent district (world units). */
 const RUBBLE_SLOT_GAP = 2.4;
 
@@ -65,6 +72,26 @@ export function ChangeOverlays({ layout, changeSet }: { layout: CityLayout; chan
       });
   }, [changeSet, districtIndex, layout.districts]);
 
+  /**
+   * Foundation-status files that have no building in the captured layout
+   * (created after the city was built): a low pale slab at their parent
+   * district slot. Files that DO have a building are flattened by
+   * Buildings.tsx directly — no extra mesh here.
+   */
+  const foundations = useMemo(() => {
+    const buildingIds = new Set(layout.buildings.map((building) => building.fileId));
+    return changeSet.changes
+      .filter((change) => change.status === "foundation" && !buildingIds.has(change.fileId))
+      .map((change, index) => {
+        const district = districtIndex.get(
+          parentDistrict(layout.districts, change.fileId)?.path ?? "",
+        );
+        if (district === undefined) return null;
+        const slot = slotFor(district, change.fileId, index);
+        return { id: change.fileId, ...slot };
+      });
+  }, [changeSet, districtIndex, layout]);
+
   const movedLine = useMemo(() => {
     const from = changeSet.changes.find((change) => change.status === "moved");
     if (from === undefined || from.oldPath === undefined) return null;
@@ -82,6 +109,15 @@ export function ChangeOverlays({ layout, changeSet }: { layout: CityLayout; chan
           <mesh key={`rubble:${slab.id}`} position={[slab.x, RUBBLE_H / 2, slab.z]}>
             <boxGeometry args={[RUBBLE_W, RUBBLE_H, RUBBLE_D]} />
             <meshStandardMaterial color={STATUS_COLORS.rubble} roughness={1} metalness={0} />
+          </mesh>
+        ),
+      )}
+
+      {foundations.map((slab) =>
+        slab === null ? null : (
+          <mesh key={`foundation:${slab.id}`} position={[slab.x, FOUNDATION_H / 2, slab.z]}>
+            <boxGeometry args={[FOUNDATION_W, FOUNDATION_H, FOUNDATION_D]} />
+            <meshStandardMaterial color={STATUS_COLORS.foundation} roughness={1} metalness={0} />
           </mesh>
         ),
       )}

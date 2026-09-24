@@ -14,8 +14,14 @@ import { simpleGit } from "simple-git";
  * can surface it verbatim (status 400) — never raw OS/git text.
  */
 
-/** How a file changed between the two commits. */
-export type ChangeKind = "added" | "modified" | "deleted" | "renamed";
+/**
+ * How a file changed between the two compared states.
+ *
+ * "untracked" never comes out of commit-to-commit diffs — it exists for the
+ * Phase 5 working-directory change set, where files unknown to HEAD (untracked
+ * on disk or freshly staged) are merged in and rendered as foundations.
+ */
+export type ChangeKind = "added" | "modified" | "deleted" | "renamed" | "untracked";
 
 /** One changed file between HEAD~1 and HEAD. */
 export interface ChangedFile {
@@ -166,8 +172,11 @@ function parseNameStatus(nameStatus: string): ChangedFile[] {
  *
  * Deletion patches have no `+++ b/…` line — they're keyed from `--- a/…`
  * instead; deletion paths in name-status already match that `a/` path.
+ * Exported for the Phase 5 workdir module, which parses the same
+ * `git diff HEAD` shape for its tracked files (untracked files have no
+ * patch and simply stay unmatched here).
  */
-function applyPatchDetails(files: ChangedFile[], fullDiff: string): void {
+export function applyPatchDetails(files: ChangedFile[], fullDiff: string): void {
   const byPath = new Map(files.map((file) => [file.path.toUpperCase(), file]));
   for (const section of fullDiff.split(/^diff --git /m)) {
     if (section.trim().length === 0) continue;

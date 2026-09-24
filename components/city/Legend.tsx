@@ -16,6 +16,7 @@ const SWATCH_BOX = "flex h-4 w-4 shrink-0 items-center justify-center";
 const COMPARE_ROWS: Array<{ swatch: string; label: string }> = [
   { swatch: "h-4 w-1.5 rounded-[1px] bg-[#f59e0b]", label: "construction site · modified" },
   { swatch: "h-4 w-1.5 rounded-[1px] bg-[#a3e635]", label: "fresh construction · added" },
+  { swatch: "h-0.5 w-4 rounded-[1px] bg-[#e2e8f0]", label: "foundation · untracked (about to commit)" },
   { swatch: "h-1.5 w-4 rounded-[1px] bg-[#57534e]", label: "rubble · deleted" },
   { swatch: "h-[2px] w-4 rounded-full bg-[#22d3ee]", label: "moved · renamed" },
   { swatch: "h-4 w-1.5 rounded-[1px] bg-[#ef4444]", label: "blast radius · importer touched" },

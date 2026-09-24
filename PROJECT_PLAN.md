@@ -8,7 +8,7 @@
 >
 > **Status legend:** ✅ done · 🚧 in progress · ⬜ pending · ⏸️ deferred · ❌ cancelled
 >
-> Last updated: 2026-09-24
+> Last updated: 2026-09-24 (Phase 5 complete)
 
 ---
 
@@ -224,7 +224,7 @@ Phase 3's `--depth 1` clone meant a GitHub import had exactly one commit, so "Pr
 
 ---
 
-## Phase 5 — Compare Mode: HEAD vs. Working Directory ⬜ (0%)
+## Phase 5 — Compare Mode: HEAD vs. Working Directory ✅ (100%)
 
 **Goal:** "What am I about to commit" — the same visual treatment for uncommitted changes, covering modified, staged, untracked, renamed, and deleted files (PRD milestone 4).
 
@@ -234,18 +234,23 @@ Phase 3's `--depth 1` clone meant a GitHub import had exactly one commit, so "Pr
 - Extend `lib/diff/apply.ts` — workdir-specific classifications
 
 ### Tasks
-- [ ] `workdir.ts`: merge staged + unstaged + untracked into a single change set with per-file status
-- [ ] Untracked files: they exist on disk — parse them (Phase 1 pipeline) and render as **freshly-poured foundations** (low flat slabs — PRD metaphor, deliberately not-yet-buildings)
-- [ ] Renames and deletions in the workdir → same rubble/moved treatment as Phase 4
-- [ ] `workdirHash` = hash of `status --porcelain` output (feeds Phase 6 cache invalidation)
-- [ ] `CompareBar.tsx`: third mode framed as *"About to commit"*; compare modes disabled with an explanatory message when the source isn't a git repo
-- [ ] Edge-case tests: untracked-only, staged-only, unstaged-only, rename, delete, clean-workdir (should render identical to static)
+- [x] `workdir.ts`: merge staged + unstaged + untracked into a single change set with per-file status — implemented as ONE `git status --porcelain -uall` pass (XY codes already merge index+worktree per file, so no manual staged/unstaged diffing or dedupe) + one `git diff -M HEAD` pass attaching hunk headers/insertions/deletions to tracked files (untracked files have no patch, counts stay 0). `??`/`A`→untracked, any `D`→deleted, index `R`/`C`→renamed ("old -> new" row), else → modified; `!!` (ignored) never appears. `lib/git/workdir.ts`
+- [x] Untracked files: they exist on disk — parse them (Phase 1 pipeline) and render as **freshly-poured foundations** (low flat slabs — PRD metaphor, deliberately not-yet-buildings). Two render paths: untracked files already in the captured layout are flattened in place by `Buildings.tsx` (fixed low slab height + pale slate `#e2e8f0`); untracked files added AFTER the city was built (no building in layout) get a foundation slab at their `parentDistrict` slot via `ChangeOverlays.tsx` — same mechanism as rubble
+- [x] Renames and deletions in the workdir → same rubble/moved treatment as Phase 4 (`applyWorkdirDiff` in `lib/diff/apply.ts`; shared classification + blast-radius closure refactored with `applyCommitDiff`)
+- [x] `workdirHash` = sha-256 of the `status --porcelain -uall` output (feeds Phase 6 cache invalidation), stored on `ChangeSet.workdirHash` for workdir compares only
+- [x] `CompareBar.tsx`: third mode *"About to commit"* live; BOTH compare buttons disabled with the reason ("not a git repository — compare modes need git history") when the graph has no HEAD sha; summary fetched with `mode` and cached per workdir hash; counts line shows `untracked` and reads "clean — nothing to commit"
+- [x] Edge-case tests (10 new, `tests/workdir.test.ts`): untracked-only, staged-only vs unstaged-only, staged rename (`git.mv`, oldPath recorded, no double delete row), delete, mixed trio (untracked+modified+deleted in one pass with patch details on tracked only), ignored files excluded + clean workdir, non-repo / no-commits readable errors, `applyWorkdirDiff` classification (foundation/construction/rubble + counts + workdirHash), workdir-vs-commit kind divergence (new file = foundation in workdir, invisible to the commit diff), byte-identical determinism
 
 ### Acceptance
-1. Create one untracked file, modify another, delete a third in the fixture → each renders its correct metaphor (foundation / construction / rubble)
-2. Clean working directory → workdir compare shows "nothing to commit" state, no visual noise
-3. Switching between all three modes never shifts the layout
-4. Non-git folder → compare modes are visibly disabled with a reason, static view unaffected
+1. ✅ One untracked + one modified + one deleted file in the fixture → each renders its metaphor (foundation / construction / rubble) — asserted at unit level in `tests/workdir.test.ts`
+2. ✅ Clean working directory → empty change set, counts all zero, "clean — nothing to commit" line, zero visual change (hash stable across re-calls, asserted)
+3. ✅ Switching modes never shifts the layout — the server answers workdir compares from the stored static analysis verbatim (same reuse path as Phase 4's "prev")
+4. ✅ Non-git folder → both compare buttons disabled with the reason, static view unaffected (`isGitRepo` = `graph.headSha !== undefined`)
+
+### Documented Phase 5 limitations (deliberate scope)
+- Worktree-only renames (file moved without staging) are not rename-detected by git itself — they read as deleted + untracked, same as raw `git status` would show
+- Untracked files created after the city was built place their foundation at a district slot (metaphor, not measurement); re-import to get the exact layout position
+- Ignored files are never candidates; merge-state/status rows beyond XY are skipped defensively
 
 ---
 
@@ -342,7 +347,7 @@ Phase 3's `--depth 1` clone meant a GitHub import had exactly one commit, so "Pr
 
 ## Currently Working On
 
-**Phase 5 — Compare Mode: HEAD vs. working directory.** Phase 4 complete (2026-09-24): `lib/git/diff.ts` (`diffCommits`: `-M` name-status + per-file hunk headers/insertions/deletions), `lib/diff/apply.ts` (`applyCommitDiff` classification + reverse-edge blast-radius closure, `parentDistrict` rubble placement), `/api/analyze` `mode: "prev"` with server-side analysis reuse (byte-identical layout → zero shift), `/api/summarize` (one cached LLM call per commit with `summarizeDiff`), `CompareBar` mode toggle + summary panel, and compare visuals in `components/city/` (amber construction + rotating crane, lime fresh builds, red blast-radius tint, grey rubble, cyan moved markers). 88/88 tests green, `tsc`/lint/build clean. Browser walkthrough waived this session — do one manual static→prev toggle in the dev server before signing the phase off if desired. Next up: `lib/git/workdir.ts` (`git status --porcelain` merge → unified change set + `workdirHash`) and the untracked-foundation rendering.
+**Phase 5 — complete (2026-09-24).** Working-directory compare ("About to commit") fully wired: `lib/git/workdir.ts` (`workdirDiff`: one `git status --porcelain -uall` pass merged into a per-file change set + sha-256 `workdirHash`, one `git diff -M HEAD` pass for hunk details of tracked files), `lib/diff/apply.ts` gained `applyWorkdirDiff` + the `foundation` status (shared blast-radius machinery with `applyCommitDiff`), `/api/analyze` `mode: "workdir"` reusing the stored static analysis (zero layout shift), `/api/summarize` with a `mode` param cached per workdir hash, and UI enablement: both compare buttons gated on git-ness, foundation slabs in `Buildings.tsx` (flattened in place) + `ChangeOverlays.tsx` (slots for post-import files), legend row, `untracked` count in the summary line. 101/101 tests green (12 new), `tsc`/lint/build clean. Browser walkthrough not run this session (per user instruction — no browser automation without permission); a manual static → prev → about-to-commit toggle pass in the dev server before signing off is optional. Next up: **Phase 6 — snapshots** (`lib/snapshot/` schema, save/load, key derivation, cache-first `/api/analyze`, persisted LLM summaries).
 
 ## Quick Status
 
@@ -353,6 +358,6 @@ Phase 3's `--depth 1` clone meant a GitHub import had exactly one commit, so "Pr
 | 2 | City layout + static 3D view | ✅ | 100 |
 | 3 | GitHub import + LLM inspect | ✅ | 100 |
 | 4 | Compare: HEAD vs. HEAD~1 | ✅ | 100 |
-| 5 | Compare: HEAD vs. workdir | ⬜ | 0 |
+| 5 | Compare: HEAD vs. workdir | ✅ | 100 |
 | 6 | Save / reload snapshots | ⬜ | 0 |
 | 7 | Hardening & polish | ⬜ | 0 |

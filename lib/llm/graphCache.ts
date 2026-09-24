@@ -13,6 +13,7 @@ import type { CodeGraph } from "../types";
 import type { CityLayout } from "../city/layout";
 import type { BuildWarning } from "../parser/buildGraph";
 import type { CommitDiff } from "../git/diff";
+import type { WorkdirDiff } from "../git/workdir";
 import { computeRepoKey } from "../repoKey";
 
 const graphStore = new Map<string, CodeGraph>();
@@ -64,6 +65,18 @@ export function storeCommitDiff(repoKey: string, diff: CommitDiff): void {
 /** Fetch the commit diff stored by the latest prev-compare of this repoKey. */
 export function getStoredCommitDiff(repoKey: string): CommitDiff | undefined {
   return diffStore.get(repoKey);
+}
+
+const workdirDiffStore = new Map<string, WorkdirDiff>();
+
+/** Remember the workdir diff captured for a repoKey's "about to commit" run. */
+export function storeWorkdirDiff(repoKey: string, diff: WorkdirDiff): void {
+  workdirDiffStore.set(repoKey, diff);
+}
+
+/** Fetch the workdir diff stored by the latest workdir-compare of this repoKey. */
+export function getStoredWorkdirDiff(repoKey: string): WorkdirDiff | undefined {
+  return workdirDiffStore.get(repoKey);
 }
 
 const compareSummaryCache = new Map<string, string>();

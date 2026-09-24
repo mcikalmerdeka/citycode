@@ -118,7 +118,11 @@ export default function Home() {
               changeSet={compareMode === "static" ? null : (result.changeSet ?? null)}
             />
             <Legend />
-            <CompareBar repoKey={result.repoKey} onCompareResult={handleCompareResult} />
+            <CompareBar
+              repoKey={result.repoKey}
+              isGitRepo={result.graph.headSha !== undefined}
+              onCompareResult={handleCompareResult}
+            />
             <button
               type="button"
               onClick={toggleLabels}

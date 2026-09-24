@@ -149,7 +149,7 @@ describe("applyCommitDiff", () => {
       ),
     );
 
-    expect(changeSet.counts).toEqual({ modified: 1, added: 1, deleted: 1, renamed: 0 });
+    expect(changeSet.counts).toEqual({ modified: 1, added: 1, deleted: 1, renamed: 0, untracked: 0 });
     expect(changeSet.headSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
