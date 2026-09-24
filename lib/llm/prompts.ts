@@ -5,6 +5,7 @@
  */
 
 import type { CodeGraph, FileNode } from "../types";
+import type { ChangedFile } from "../git/diff";
 import { getLlmClient, LLM_REASONING_EFFORT } from "./client";
 
 export const EXPLAIN_SYSTEM_PROMPT =
@@ -67,6 +68,70 @@ export async function explainFile(
   const summary = (response.choices[0]?.message?.content ?? "").trim();
   if (summary.length === 0) {
     throw new Error("CityCode: the model returned an empty explanation");
+  }
+  return { summary };
+}
+
+/* ------------------------------------------------------------------ *
+ * Phase 4 — the one-commit change summary
+ * ------------------------------------------------------------------ */
+
+export const SUMMARIZE_SYSTEM_PROMPT =
+  "You summarize commits for developers in plain English. " +
+  "Given the files a commit changed (added/modified/deleted/renamed) and each file's diff hunk headers, " +
+  "explain what this commit most likely did and its likely impact on the codebase. " +
+  "Answer in one short paragraph (3-5 sentences). No code fragments, no bullet lists, no markdown.";
+
+const MAX_FILES_IN_DIFF_PROMPT = 40;
+const MAX_HUNKS_PER_FILE = 5;
+
+/** The user message for the one compare-view change summary. */
+export function buildSummarizeUserPrompt(files: readonly ChangedFile[]): string {
+  const included = files.slice(0, MAX_FILES_IN_DIFF_PROMPT);
+  const overflow = files.length - included.length;
+  const sections = included.map((file) => {
+    const hunks = file.hunkHeaders
+      .map((hunk) => hunk.replace(/\s+$/, ""))
+      .filter((hunk) => hunk.length > 0)
+      .slice(0, MAX_HUNKS_PER_FILE)
+      .map((hunk) => `    ${hunk}`)
+      .join("\n");
+    const renameNote = file.kind === "renamed" && file.oldPath !== undefined ? ` (was ${file.oldPath})` : "";
+    const hunksLine = hunks.length > 0 ? `\n  hunks:\n${hunks}` : "";
+    return `- ${file.kind}: ${file.path}${renameNote}${hunksLine}`;
+  });
+  return (
+    [
+      "Commit summary request — changed files:",
+      ...sections,
+      overflow > 0 ? `(+${overflow} more files)` : "",
+      "",
+      "In plain English, what did this commit change and what is its likely blast radius?",
+    ]
+      .filter((line) => line.length > 0 || sections.length === 0)
+      .join("\n") + (files.length === 0 ? "\n(no changed files)" : "")
+  );
+}
+
+/**
+ * One LLM chat call summarizing the whole commit; returns the plain-English
+ * paragraph. Thrown errors are mapped to user-facing messages by the route.
+ */
+export async function summarizeDiff(files: readonly ChangedFile[]): Promise<{ summary: string }> {
+  const { client, model } = getLlmClient();
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      { role: "system", content: SUMMARIZE_SYSTEM_PROMPT },
+      { role: "user", content: buildSummarizeUserPrompt(files) },
+    ],
+    // Same reasoning-notes contract as explainFile: reasoning effort != none
+    // rejects temperature/top_p, so neither is sent.
+    reasoning_effort: LLM_REASONING_EFFORT,
+  });
+  const summary = (response.choices[0]?.message?.content ?? "").trim();
+  if (summary.length === 0) {
+    throw new Error("CityCode: the model returned an empty change summary");
   }
   return { summary };
 }

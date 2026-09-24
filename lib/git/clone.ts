@@ -81,7 +81,16 @@ export function listClonedRepos(): string[] {
 }
 
 /**
- * Shallow-clone `parsed` (HEAD only, single branch) into
+ * How much history a GitHub clone carries: HEAD plus HEAD~1 — exactly the
+ * two states CityCode's commit compare (Phase 4) ever diffes (PRD §4
+ * non-goal: no history browser, ever). Depth 1 broke `diff HEAD~1..HEAD`
+ * on clones with `this repository has only one commit`; depth 2 fixes that
+ * for the minimal download cost still short of a full clone.
+ */
+const CLONE_DEPTH = "2";
+
+/**
+ * Shallow-clone `parsed` (last 2 commits, single branch) into
  * `.citycode-cache/clones/<owner>/<repo>` and return the clone's absolute
  * POSIX-style path.
  *
@@ -111,7 +120,7 @@ export async function cloneRepo(parsed: GitHubRepo): Promise<string> {
     const previous = process.env.GIT_TERMINAL_PROMPT;
     process.env.GIT_TERMINAL_PROMPT = "0";
     try {
-      await git.clone(parsed.httpsUrl, destination, ["--depth", "1", "--single-branch"]);
+      await git.clone(parsed.httpsUrl, destination, ["--depth", CLONE_DEPTH, "--single-branch"]);
     } finally {
       if (previous === undefined) {
         delete process.env.GIT_TERMINAL_PROMPT;

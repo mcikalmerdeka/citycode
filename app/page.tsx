@@ -14,6 +14,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useState } from "react";
 
 import { Legend } from "@/components/city/Legend";
+import { CompareBar } from "@/components/ui/CompareBar";
 import { ImportForm, type AnalyzeResponse } from "@/components/ui/ImportForm";
 import { InspectPanel } from "@/components/ui/InspectPanel";
 import { useCityStore } from "@/lib/store";
@@ -60,6 +61,7 @@ export default function Home() {
   const select = useCityStore((state) => state.select);
   const showLabels = useCityStore((state) => state.showLabels);
   const toggleLabels = useCityStore((state) => state.toggleLabels);
+  const compareMode = useCityStore((state) => state.compareMode);
 
   const handleSuccess = useCallback(
     (data: AnalyzeResponse) => {
@@ -68,6 +70,8 @@ export default function Home() {
     },
     [select],
   );
+
+  const handleCompareResult = useCallback((data: AnalyzeResponse) => handleSuccess(data), [handleSuccess]);
 
   return (
     <div className="flex h-dvh overflow-hidden bg-zinc-950 font-sans text-zinc-100">
@@ -78,7 +82,7 @@ export default function Home() {
               CityCode
             </p>
             <span className="rounded border border-zinc-700/70 px-1 py-px font-mono text-[9px] uppercase tracking-wider text-zinc-500">
-              static
+              {compareMode === "static" ? "static" : compareMode === "prev" ? "prev (HEAD vs. HEAD~1)" : "workdir"}
             </span>
           </div>
           <ImportForm onSuccess={handleSuccess} />
@@ -109,8 +113,12 @@ export default function Home() {
       <main className="relative min-w-0 flex-1">
         {result ? (
           <>
-            <CityScene layout={result.layout} />
+            <CityScene
+              layout={result.layout}
+              changeSet={compareMode === "static" ? null : (result.changeSet ?? null)}
+            />
             <Legend />
+            <CompareBar repoKey={result.repoKey} onCompareResult={handleCompareResult} />
             <button
               type="button"
               onClick={toggleLabels}

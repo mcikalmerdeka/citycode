@@ -13,9 +13,11 @@ import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 
 import type { CityLayout } from "@/lib/city/layout";
+import type { ChangeSet } from "@/lib/diff/apply";
 import { useCityStore } from "@/lib/store";
 
 import { Buildings } from "./Buildings";
+import { ChangeOverlays } from "./ChangeOverlays";
 import { Districts } from "./Districts";
 import { Roads } from "./Roads";
 import { installThreeConsoleFilter } from "./threeConsoleFilter";
@@ -29,8 +31,16 @@ const SCENE_BACKGROUND = "#0b0c0f";
 /** Ground plane color — one step lighter so the horizon reads. */
 const GROUND_COLOR = "#131418";
 
-export function CityScene({ layout }: { layout: CityLayout }) {
+export function CityScene({
+  layout,
+  changeSet,
+}: {
+  layout: CityLayout;
+  /** Present only in compare modes (Phase 4) — drives hues but never geometry. */
+  changeSet?: ChangeSet | null;
+}) {
   const select = useCityStore((state) => state.select);
+  const compareMap = changeSet === undefined || changeSet === null ? undefined : new Map(changeSet.changes.map((change) => [change.fileId, change]));
 
   return (
     <Canvas
@@ -57,7 +67,10 @@ export function CityScene({ layout }: { layout: CityLayout }) {
       <group key={`${layout.repoPath}:${layout.buildings.length}`}>
         <Districts districts={layout.districts} />
         <Roads roads={layout.roads} />
-        <Buildings buildings={layout.buildings} />
+        <Buildings buildings={layout.buildings} changes={compareMap} />
+        {changeSet !== undefined && changeSet !== null && (
+          <ChangeOverlays layout={layout} changeSet={changeSet} />
+        )}
       </group>
 
       <OrbitControls target={[0, 0, 0]} enableDamping dampingFactor={0.08} />

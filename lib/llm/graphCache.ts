@@ -10,6 +10,9 @@
  */
 
 import type { CodeGraph } from "../types";
+import type { CityLayout } from "../city/layout";
+import type { BuildWarning } from "../parser/buildGraph";
+import type { CommitDiff } from "../git/diff";
 import { computeRepoKey } from "../repoKey";
 
 const graphStore = new Map<string, CodeGraph>();
@@ -22,6 +25,62 @@ export function storeGraph(graph: CodeGraph): void {
 /** Fetch the graph previously stored by /api/analyze, if this server run built it. */
 export function getStoredGraph(repoKey: string): CodeGraph | undefined {
   return graphStore.get(repoKey);
+}
+
+/* ------------------------------------------------------------------ *
+ * Phase 4 — server analysis store
+ *
+ * Compare modes reuse the static run's graph + layout so toggling
+ * "static → previous commit" provably never shifts the layout (the exact
+ * same JSON is handed back), and never re-parses the repo. The diff input
+ * captured at analyze time feeds /api/summarize's single LLM call.
+ * ------------------------------------------------------------------ */
+
+interface AnalysisRecord {
+  graph: CodeGraph;
+  layout: CityLayout;
+  warnings: BuildWarning[];
+}
+
+const analysisStore = new Map<string, AnalysisRecord>();
+
+/** Store the full analysis (graph + layout + warnings) for reuse by compare modes. */
+export function storeAnalysis(record: AnalysisRecord): void {
+  analysisStore.set(computeRepoKey(record.graph), record);
+}
+
+/** Fetch the analysis record for a repoKey of this server run, or undefined. */
+export function getStoredAnalysis(repoKey: string): AnalysisRecord | undefined {
+  return analysisStore.get(repoKey);
+}
+
+const diffStore = new Map<string, CommitDiff>();
+
+/** Remember the commit diff captured for a repoKey's compare run. */
+export function storeCommitDiff(repoKey: string, diff: CommitDiff): void {
+  diffStore.set(repoKey, diff);
+}
+
+/** Fetch the commit diff stored by the latest prev-compare of this repoKey. */
+export function getStoredCommitDiff(repoKey: string): CommitDiff | undefined {
+  return diffStore.get(repoKey);
+}
+
+const compareSummaryCache = new Map<string, string>();
+
+/** Cache key for the per-commit change summary: (repoKey, headSha). */
+export function compareSummaryKey(repoKey: string, headSha: string | undefined): string {
+  return `${repoKey}\u0000${headSha ?? "none"}`;
+}
+
+/** Remember a freshly generated one-commit change summary. */
+export function rememberCompareSummary(repoKey: string, headSha: string | undefined, summary: string): void {
+  compareSummaryCache.set(compareSummaryKey(repoKey, headSha), summary);
+}
+
+/** Get a cached one-commit change summary, or undefined. */
+export function getCompareSummary(repoKey: string, headSha: string | undefined): string | undefined {
+  return compareSummaryCache.get(compareSummaryKey(repoKey, headSha));
 }
 
 const summaryCache = new Map<string, string>();

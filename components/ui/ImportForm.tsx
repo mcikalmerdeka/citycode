@@ -13,6 +13,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 
 import type { CityLayout } from "@/lib/city/layout";
+import type { ChangeSet } from "@/lib/diff/apply";
 import type { CodeGraph } from "@/lib/types";
 
 /** Validated shape of a 200 response from POST /api/analyze. */
@@ -22,6 +23,8 @@ export interface AnalyzeResponse {
   warnings: { path: string; message: string }[];
   /** Stable repo key shared with /api/explain (Phase 3). */
   repoKey: string;
+  /** Classified change record — present when the request used mode "prev" (Phase 4). */
+  changeSet?: ChangeSet;
 }
 
 /* ------------------------------------------------------------------ *
@@ -139,6 +142,30 @@ function isCityLayout(value: unknown): value is CityLayout {
   );
 }
 
+function isNodeChange(value: unknown): value is ChangeSet["changes"][number] {
+  return (
+    isRecord(value) &&
+    isStr(value.fileId) &&
+    ["construction", "fresh", "rubble", "moved", "blast"].includes(String(value.status)) &&
+    (value.oldPath === undefined || isStr(value.oldPath))
+  );
+}
+
+function isChangeSet(value: unknown): value is ChangeSet {
+  return (
+    isRecord(value) &&
+    isStr(value.headSha) &&
+    isStr(value.baseSha) &&
+    Array.isArray(value.changes) &&
+    value.changes.every(isNodeChange) &&
+    isRecord(value.counts) &&
+    isNum(value.counts.modified) &&
+    isNum(value.counts.added) &&
+    isNum(value.counts.deleted) &&
+    isNum(value.counts.renamed)
+  );
+}
+
 function isAnalyzeResponse(value: unknown): value is AnalyzeResponse {
   return (
     isRecord(value) &&
@@ -146,9 +173,11 @@ function isAnalyzeResponse(value: unknown): value is AnalyzeResponse {
     isCityLayout(value.layout) &&
     Array.isArray(value.warnings) &&
     value.warnings.every(isWarning) &&
-    isStr(value.repoKey)
+    isStr(value.repoKey) &&
+    (value.changeSet === undefined || isChangeSet(value.changeSet))
   );
 }
+
 
 /* ------------------------------------------------------------------ */
 

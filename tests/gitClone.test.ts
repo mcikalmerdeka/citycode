@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { simpleGit } from "simple-git";
 import { cloneRepo, clonePathFor, listClonedRepos } from "../lib/git/clone";
 import type { GitHubRepo } from "../lib/git/url";
 import { parseGitHubUrl } from "../lib/git/url";
@@ -10,7 +11,7 @@ import { cleanup, initRepo, makeTempDir, writeFiles } from "./helpers/fixtures";
  * clone.ts is tested against a LOCAL fixture repo: the URL parser is the
  * github.com gate (so network access stays out of tests), while cloneRepo
  * accepts a GitHubRepo handed to it directly with a local httpsUrl. This
- * exercises the real clone logic (depth 1, fresh re-clone, error mapping,
+ * exercises the real clone logic (depth 2, fresh re-clone, error mapping,
  * cache layout) without touching that gate or the network.
  */
 
@@ -83,6 +84,45 @@ describe("cloneRepo", () => {
     const second = await cloneRepo(parsed);
     expect(second.replace(/\\/g, "/")).toBe(first.replace(/\\/g, "/"));
     expect(fs.existsSync(path.join(second, "stale-artifact.txt"))).toBe(false);
+  }, 30_000);
+
+  it("clones depth 2 so the commit compare has a HEAD~1 to diff against (Phase 4 regression)", async () => {
+    const source = makeTempDir("citycode-clone-src3-");
+    dirs.push(source);
+    writeFiles(source, [{ path: "src/main.ts", contents: "export const x = 1;\n" }]);
+    await initRepo(source); // commit 1
+
+    // Second commit: the clone must carry BOTH commits (HEAD + HEAD~1).
+    fs.writeFileSync(
+      path.join(source, "src", "second.ts"),
+      'export const y = 2;\n',
+    );
+    const git = simpleGit(source);
+    await git.add("-A");
+    await git.raw([
+      "-c",
+      "user.name=CityCode Test",
+      "-c",
+      "user.email=citycode@test.local",
+      "commit",
+      "-m",
+      "second commit",
+    ]);
+    const headSha = (await git.revparse("HEAD")).trim();
+    const base = (await git.revparse("HEAD~1")).trim();
+
+    const { parsed, destination } = localRepoFixture(source);
+    cloneDirs.push(destination);
+
+    const clonePath = await cloneRepo(parsed);
+
+    // The exact failure mode Phase 4 hit on depth-1 clones must be gone:
+    // diffCommits resolves baseSha + name-status instead of throwing.
+    const { diffCommits } = await import("../lib/git/diff");
+    const diff = await diffCommits(clonePath);
+    expect(diff.headSha).toBe(headSha);
+    expect(diff.baseSha).toBe(base);
+    expect(diff.files.map((file) => file.path)).toContain("src/second.ts");
   }, 30_000);
 });
 

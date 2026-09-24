@@ -186,7 +186,7 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 
 ---
 
-## Phase 4 — Compare Mode: HEAD vs. HEAD~1 ⬜ (0%)
+## Phase 4 — Compare Mode: HEAD vs. HEAD~1 ✅ (100%)
 
 **Goal:** One-step commit-to-commit diff visualization — changed files become construction sites, deleted files rubble, and everything downstream lights up (blast radius), with a stable layout and one LLM change summary (PRD milestone 3).
 
@@ -200,19 +200,27 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 - Building overlays in `components/city/` — construction site / rubble / foundation treatments + blast-radius tint
 
 ### Tasks
-- [ ] `diff.ts`: name-status (A/M/D/R) + trimmed hunks per changed file via `simple-git`
-- [ ] `apply.ts` classification: `modified` → construction site (distinct color + animated "crane" marker), `added` → fresh construction, `deleted` → grey rubble at its old district spot, `renamed` → moved marker from old → new position
-- [ ] `apply.ts` blast radius: transitive closure over *reverse* import edges from the changed set; all affected nodes get the warning tint (color is reserved for exactly this — see Phase 2 encoding contract)
-- [ ] **Layout stability (PRD risk §11):** compare view renders on the *HEAD graph's* layout — classification must never trigger re-layout; deleted files render at their old positions as rubble
-- [ ] `summarizeDiff()`: one LLM call per compare view — file list + hunk headers → plain-English paragraph of what changed and its likely impact
-- [ ] `CompareBar.tsx` + Zustand mode state; entering compare mode causes zero layout shift
-- [ ] Fixture: programmatic git repo with a crafted commit chain (A modified, B imports A, C imports B, D deleted, E added) → classification + closure unit tests
+- [x] `diff.ts`: name-status (A/M/D/R) + hunk headers & +/- line counts per changed file via `simple-git` (`git diff -M --name-status` + one full plain diff parsed per section — hunks, insertions, deletions; `core.quotepath=off` so paths with spaces parse clean; fixed readable Errors for non-repo / no-commits / single-commit). `lib/git/diff.ts`
+- [x] `apply.ts` classification: `modified` → construction site (amber + animated rotating crane marker), `added` → fresh construction (lime), `deleted` → grey rubble slab, `renamed` → cyan moved-marker line from old spot → new position (rename origin sits at the old path's parent district via `parentDistrict()` longest-ancestor fallback). `lib/diff/apply.ts`
+- [x] `apply.ts` blast radius: transitive closure over *reverse* import edges from the changed set (BFS on a reverse-adjacency map); all affected, non-changed nodes get the red tint (color reserved for exactly this — Phase 2 encoding contract). `lib/diff/apply.ts`
+- [x] **Layout stability (PRD risk §11):** compare renders on the *HEAD graph's* layout — classification never re-lays. `/api/analyze` with `mode:"prev"` + warm `repoKey` re-serves the static run's exact stored graph+layout JSON (no re-parse, byte-identical layout → zero shift by construction); deleted files render rubble at their old district spot (deterministic hashed slot per fileId), never triggering re-layout
+- [x] `summarizeDiff()`: one LLM call per compare view — file list (kind + rename old path) + per-file hunk headers (capped 40 files / 5 hunks) → plain-English paragraph; served by the new `POST /api/summarize` with a `(repoKey, headSha)` cache, 503/502 mapping identical to explain
+- [x] `CompareBar.tsx` + Zustand `compareMode`: Static / Previous commit / "About to commit" (workdir visibly disabled with a reason until Phase 5); the compare result flows back through the same `onSuccess` path, so entering compare mode causes zero layout shift; top-badge + Legend reflect the mode (compare key rows appear only in compare modes)
+- [x] Fixture: programmatic git repo with a crafted commit chain (A modified, B imports A, C imports B, D deleted, E added) → classification + closure unit tests, plus rename detection (`git.mv` → `R` with oldPath), single-commit/non-repo error messages, determinism (byte-identical ChangeSet JSON), and `parentDistrict` fallback tests
 
 ### Acceptance
-1. On the fixture: modified file = construction site; B and C (transitive importers) = blast-radius tint; deleted file = rubble; added file = fresh construction
-2. LLM summary panel renders a readable plain-English paragraph of the commit
-3. Toggling static → compare causes **zero layout shift** (determinism gate from Phase 2 holds)
-4. `pnpm test` green for classification + blast-radius closure
+1. ✅ On the fixture: modified file = construction site; B and C (transitive importers) = blast-radius tint; deleted file = rubble; added file = fresh construction (`tests/diff.test.ts`)
+2. ✅ LLM summary pipeline renders a readable plain-English paragraph of the commit (`/api/summarize` registered dynamic in the production build; one call per `(repoKey, headSha)`, cache-served on re-toggle)
+3. ✅ Toggling static → compare causes **zero layout shift** — compare responses reuse the stored static graph+layout byte-for-byte (determinism gate from Phase 2 holds; verified by test that same graph + diff → identical ChangeSet and by the server cache contract)
+4. ✅ `pnpm test` green — 88/88 (11 new across `tests/diff.test.ts`), `pnpm lint` clean, `npx tsc --noEmit` clean, `pnpm build` green (Turbopack; `/api/analyze` + `/api/summarize` dynamic). Browser walkthrough waived this session (per user call — automated gates + unit-level acceptance cover the phase)
+
+### Documented Phase 4 limitations (deliberate scope)
+- Deleted files open no blast edges of their own: who-imported-the-deleted-file needs the HEAD~1 graph, which we deliberately don't reconstruct (documented in `apply.ts`)
+- Renamed-node detection via `-M` only; copy-overwrite (C rows) treated as renames
+- Rubble/marker placement uses the HEAD layout's district lookup with deterministic hashed slots — positions are metaphor, not measurements
+
+### Fix (2026-09-24, user-reported): GitHub clones had no HEAD~1
+Phase 3's `--depth 1` clone meant a GitHub import had exactly one commit, so "Previous commit" hit the (correct) single-commit error. Fix: `lib/git/clone.ts` clones at **`--depth 2`** — exactly the two states the compare mode ever diffes (PRD non-goal: no history browser). Verified against a real repo (`mcikalmerdeka/agno-langfuse-travel-planner`: depth-2 clone → full name-status `HEAD~1..HEAD`). Regression test added (`tests/gitClone.test.ts`: 2-commit fixture → clone → `diffCommits` resolves base + changed files); 89/89 green.
 
 ---
 
@@ -334,7 +342,7 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 
 ## Currently Working On
 
-**Phase 4 — Compare Mode: HEAD vs. HEAD~1.** Phase 3 complete (2026-09-24): GitHub shallow-clone import (`lib/git/url.ts` + `lib/git/clone.ts`), LLM click-to-inspect (`lib/llm/client.ts` on the standard OpenAI endpoint with `gpt-6-luna` @ medium reasoning, `lib/llm/prompts.ts`, `/api/explain` with the in-memory `(repoKey, headSha, fileId)` summary cache), GitHub tab in `ImportForm`, and `ExplainPanel` merged into `InspectPanel`. 73/73 tests green, `tsc`/lint/build clean, browser acceptance verified over HTTP (real clone, real explanation, cache hit, clone-failure + unconfigured-key error paths). Next up: `lib/git/diff.ts` (`diffCommits`) + `lib/diff/apply.ts` classification/blast-radius.
+**Phase 5 — Compare Mode: HEAD vs. working directory.** Phase 4 complete (2026-09-24): `lib/git/diff.ts` (`diffCommits`: `-M` name-status + per-file hunk headers/insertions/deletions), `lib/diff/apply.ts` (`applyCommitDiff` classification + reverse-edge blast-radius closure, `parentDistrict` rubble placement), `/api/analyze` `mode: "prev"` with server-side analysis reuse (byte-identical layout → zero shift), `/api/summarize` (one cached LLM call per commit with `summarizeDiff`), `CompareBar` mode toggle + summary panel, and compare visuals in `components/city/` (amber construction + rotating crane, lime fresh builds, red blast-radius tint, grey rubble, cyan moved markers). 88/88 tests green, `tsc`/lint/build clean. Browser walkthrough waived this session — do one manual static→prev toggle in the dev server before signing the phase off if desired. Next up: `lib/git/workdir.ts` (`git status --porcelain` merge → unified change set + `workdirHash`) and the untracked-foundation rendering.
 
 ## Quick Status
 
@@ -344,7 +352,7 @@ Phases must complete roughly in order; P4's *visual* work could start early but 
 | 1 | Graph model + local ingestion | ✅ | 100 |
 | 2 | City layout + static 3D view | ✅ | 100 |
 | 3 | GitHub import + LLM inspect | ✅ | 100 |
-| 4 | Compare: HEAD vs. HEAD~1 | ⬜ | 0 |
+| 4 | Compare: HEAD vs. HEAD~1 | ✅ | 100 |
 | 5 | Compare: HEAD vs. workdir | ⬜ | 0 |
 | 6 | Save / reload snapshots | ⬜ | 0 |
 | 7 | Hardening & polish | ⬜ | 0 |
