@@ -20,6 +20,87 @@ export interface BuildGraphResult {
   warnings: BuildWarning[];
 }
 
+/**
+ * File-count cutoff for full parsing (PRD §11 risk: parsing performance).
+ * A repo above this many source files either opts into skim mode explicitly
+ * or gets a readable error instead of freezing the browser tab.
+ */
+export const MAX_PARSE_FILES = 1500;
+
+/**
+ * Total-lines cutoff for full parsing — enforced mid-walk (LOC is only known
+ * after each file is read, so it cannot gate at walk time). Aborting keeps
+ * the error deterministic: no timings, no partial output.
+ */
+export const MAX_TOTAL_LOC = 400_000;
+
+/** Options for {@link buildGraph}. */
+export interface BuildGraphOptions {
+  /**
+   * Skim mode: build a reduced graph WITHOUT tree-sitter parsing — per-file
+   * line counts only, no functions, no import edges. For repos above the
+   * {@link MAX_PARSE_FILES} / {@link MAX_TOTAL_LOC} limits; the UI renders
+   * district blocks with per-district file counts instead of buildings.
+   */
+  skim?: boolean;
+  /**
+   * Overridable file-count cutoff — the run's guard uses
+   * `options.maxParseFiles ?? MAX_PARSE_FILES`. Intended for tests and
+   * smoke scripts; callers that care only about correctness never pass it.
+   */
+  maxParseFiles?: number;
+  /** Overridable total-LOC cutoff — see {@link maxParseFiles}. */
+  maxTotalLoc?: number;
+  /**
+   * Transient stage feedback for the Phase 7 progress indicator. Two coarse
+   * milestones only — never per file, so a huge repo cannot flood the
+   * stream. Progress is UI-only plumbing: it never appears in the graph,
+   * warnings or any persisted artifact, so the determinism contract is
+   * untouched.
+   */
+  onProgress?: (event: { stage: "walked"; files: number } | { stage: "parsed" }) => void;
+}
+
+/**
+ * Skim-detection helper for the UI: a graph whose files carry no parsed
+ * functions and whose edges are empty — exactly the shape skim mode
+ * produces. Not a proof (a tiny repo could coincidentally parse to this
+ * shape), so the response's explicit `skim` flag is the primary signal;
+ * this helper lets the renderer cope with skim snapshots served from the
+ * Phase 6 tier, where the flag travels via `Snapshot.skim`.
+ */
+export function isSkimResult(graph: CodeGraph): boolean {
+  return graph.files.length > 0 && graph.edges.length === 0 && graph.files.every((file) => file.functions.length === 0);
+}
+
+/**
+ * The readable error thrown when a repo exceeds the size limits without
+ * opting into skim mode. Deterministic by construction: only file counts
+ * and the fixed limits appear — never timings or OS error text. The
+ * analyze route catches this class specifically to offer the skim
+ * fallback instead of failing the request.
+ */
+export class SkimRequiredError extends Error {
+  constructor(fileCount: number, limit: number = MAX_PARSE_FILES) {
+    super(
+      `CityCode: this repository has ${fileCount} source files — above the ${limit} limit for full rendering. ` +
+        "Re-run with skim mode to render a summarized city (district blocks with per-district file counts, no per-file buildings).",
+    );
+    this.name = "SkimRequiredError";
+  }
+}
+
+/**
+ * The readable error thrown when a repo exceeds the total-lines limit
+ * mid-parse. Deterministic: only counts and the fixed limits appear.
+ */
+function locCutoffError(totalLoc: number, limit: number): Error {
+  return new Error(
+    `CityCode: this repository has ${totalLoc} lines of code — above the ${limit} limit for full rendering. ` +
+      "Re-run with skim mode to render a summarized city (buildings sized by lines of code, no per-file functions or import roads).",
+  );
+}
+
 /** Internal per-file record once read + parsed successfully. */
 interface ParsedFile {
   id: string;
@@ -41,18 +122,36 @@ interface ParsedFile {
  * the path in the message; one weird file never crashes the build — unreadable
  * or parse-failing files are skipped and reported as warnings.
  */
-export async function buildGraph(root: string, source: CodeGraph["source"] = "local"): Promise<BuildGraphResult> {
+export async function buildGraph(
+  root: string,
+  source: CodeGraph["source"] = "local",
+  options_?: BuildGraphOptions,
+): Promise<BuildGraphResult> {
   const absoluteRoot = path.resolve(root);
 
   let stat: fs.Stats;
   try {
     stat = fs.statSync(absoluteRoot);
-  } catch {
-    throw new Error(`CityCode: input folder does not exist: ${absoluteRoot}`);
+  } catch (error) {
+    // Phase 7: the outlet of a bad folder is a wall of distinct failures —
+    // ENOENT, a permission wall, Windows MAX_PATH. Map the common codes to
+    // fixed readable messages instead of claiming everything "does not exist".
+    throw inputFolderError(absoluteRoot, error);
   }
   if (!stat.isDirectory()) {
     throw new Error(`CityCode: input path is not a folder: ${absoluteRoot}`);
   }
+
+  // The walker silently skips unreadable SUBfolders, but the ROOT itself must
+  // be readable — otherwise the user gets a misleading "no supported source
+  // files" instead of the real permission error. Probe it up front.
+  try {
+    fs.readdirSync(absoluteRoot);
+  } catch (error) {
+    throw inputFolderError(absoluteRoot, error);
+  }
+
+  const options = options_ ?? {};
 
   const { files: sourceFiles, otherCodeFiles } = walkSourceFiles(absoluteRoot);
   if (sourceFiles.length === 0) {
@@ -67,17 +166,82 @@ export async function buildGraph(root: string, source: CodeGraph["source"] = "lo
     );
   }
 
+  // Phase 7 large-repo guard: above the file-count cutoff, refuse full parse
+  // (skim only) unless skim mode was requested.
+  const maxParseFiles = options.maxParseFiles ?? MAX_PARSE_FILES;
+  const maxTotalLoc = options.maxTotalLoc ?? MAX_TOTAL_LOC;
+  const skim = options.skim === true;
+  if (!skim && sourceFiles.length > maxParseFiles) {
+    throw new SkimRequiredError(sourceFiles.length, maxParseFiles);
+  }
+
   const repoInfo = await getRepoInfo(absoluteRoot);
 
+  options.onProgress?.({ stage: "walked", files: sourceFiles.length });
+
   const warnings: BuildWarning[] = [];
+
+  // Skim mode: read each file once for its line count (cheap fs reads, no
+  // WASM parse), no function extraction, no import edges. Determinism holds
+  // via the same sort discipline as full mode (nothing is timing-dependent).
+  if (skim) {
+    warnings.push({
+      path: "(repo)",
+      message: `large repository — summarized city: ${sourceFiles.length} files, per-file functions and import roads omitted; buildings sized by lines of code`,
+    });
+    const files: FileNode[] = [];
+    let totalLoc = 0;
+    for (const file of sourceFiles) {
+      let source: string;
+      try {
+        source = stripBom(fs.readFileSync(file.absolutePath, "utf8"));
+      } catch {
+        warnings.push({ path: file.id, message: "skipped: file could not be read" });
+        continue;
+      }
+      const loc = countLines(source);
+      files.push({
+        id: file.id,
+        path: file.id,
+        loc,
+        language: file.language,
+        functions: [],
+        externalImports: [],
+        unresolvedImports: [],
+      });
+      totalLoc += loc;
+    }
+    if (totalLoc > maxTotalLoc) {
+      throw locCutoffError(totalLoc, maxTotalLoc);
+    }
+    files.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    warnings.sort(compareWarnings);
+    const graph: CodeGraph = {
+      files,
+      edges: [],
+      headSha: repoInfo.headSha,
+      repoPath: absoluteRoot.split(path.sep).join("/"),
+      source,
+    };
+    return { graph, warnings };
+  }
+
   const parsed: ParsedFile[] = [];
+  let totalLoc = 0;
   for (const file of sourceFiles) {
     let source: string;
     try {
-      source = fs.readFileSync(file.absolutePath, "utf8");
+      source = stripBom(fs.readFileSync(file.absolutePath, "utf8"));
     } catch {
       warnings.push({ path: file.id, message: "skipped: file could not be read" });
       continue;
+    }
+    const fileLoc = countLines(source);
+    totalLoc += fileLoc;
+    if (totalLoc > maxTotalLoc) {
+      // Mid-walk abort (fileCount check already ran): determinism cost zero
+      // because the error path yields no graph at all.
+      throw locCutoffError(totalLoc, maxTotalLoc);
     }
     let extraction: ExtractionResult;
     try {
@@ -86,8 +250,9 @@ export async function buildGraph(root: string, source: CodeGraph["source"] = "lo
       warnings.push({ path: file.id, message: "skipped: file could not be parsed" });
       continue;
     }
-    parsed.push({ id: file.id, language: file.language, loc: countLines(source), extraction });
+    parsed.push({ id: file.id, language: file.language, loc: fileLoc, extraction });
   }
+  options.onProgress?.({ stage: "parsed" });
 
   // Edges may only point at files that actually became nodes — a file that
   // was skipped cannot be an edge target, so imports of it stay unresolved.
@@ -158,4 +323,39 @@ function compareWarnings(a: BuildWarning, b: BuildWarning): number {
     return a.path < b.path ? -1 : 1;
   }
   return a.message === b.message ? 0 : a.message < b.message ? -1 : 1;
+}
+
+/**
+ * Phase 7 error surfaces: map the common fs failure codes of the input-root
+ * probe to fixed, deterministic, human-readable messages. Path strings make
+ * output vary per machine, which is intended here — the message must point
+ * the user at THEIR folder. Unknown codes fall through to the generic text
+ * (never raw `errno`, which is platform-specific noise).
+ */
+function inputFolderError(absoluteRoot: string, error: unknown): Error {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  switch (code) {
+    case "ENOENT":
+      return new Error(`CityCode: input folder does not exist: ${absoluteRoot}`);
+    case "EACCES":
+    case "EPERM":
+      return new Error(`CityCode: input folder cannot be read — permission denied: ${absoluteRoot}`);
+    case "ENAMETOOLONG":
+      return new Error(
+        `CityCode: input folder path is too long for this platform (${absoluteRoot.length} characters)`,
+      );
+    case "ENOTDIR":
+      return new Error(`CityCode: input path is not a folder: ${absoluteRoot}`);
+    default:
+      return new Error(`CityCode: input folder cannot be read: ${absoluteRoot}`);
+  }
+}
+
+/**
+ * Strip a leading UTF-8 BOM (U+FEFF) — common in Windows-authored files.
+ * Left in, the BOM leaks into tree-sitter and the first line's line count;
+ * stripping keeps both extraction and LOC honest for BOM'd sources.
+ */
+function stripBom(source: string): string {
+  return source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
 }

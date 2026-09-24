@@ -46,6 +46,8 @@ Reference document for build decisions. Versions reflect latest stable releases 
 ## 5. Code Parsing
 
 > **Updated 2026-09-24:** Python is now a supported second language — `tree-sitter-python`'s own prebuilt WASM loads alongside TypeScript (same mechanism as the Spike A finding). `.py` files join the walker allowlist; Python imports resolve repo-root-anchored (dotted paths + package `__init__.py`), relative imports from the importer's package; third-party modules are recorded as external. All layers downstream of the parser (layout, scene, compares, snapshots) are language-agnostic and unchanged.
+>
+> **Updated 2026-09-24 (Phase 7):** three divergence decisions from the original plan. (1) The large-repo size cutoffs live **in code, not env** — `MAX_PARSE_FILES` (1500) / `MAX_TOTAL_LOC` (400k) exported from `lib/parser/buildGraph.ts`; a single-user local tool gains nothing from tunable env vars. (2) The skim fallback is implemented **at the analyze route**: a cold build that crosses the cutoff raises `SkimRequiredError`, which the route catches and auto-retries with `skim: true` — the user never sees a failure, just the summarized city. (3) Stage feedback is **in-band NDJSON streaming** (`lib/progress.ts`, negotiated by the `Accept: application/x-ndjson` header) rather than a polling/job-registry endpoint — one POST runs the whole pipeline, so a single-user local tool needs no job state to expire; requests without the header keep the original single-JSON response byte-for-byte.
 
 | Task | Tool | Notes |
 |---|---|---|

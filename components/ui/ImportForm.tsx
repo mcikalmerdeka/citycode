@@ -14,7 +14,10 @@ import { useState, type FormEvent } from "react";
 
 import type { CityLayout } from "@/lib/city/layout";
 import type { ChangeSet } from "@/lib/diff/apply";
+import { NDJSON_ACCEPT, isNdjsonContentType, parseNdjsonLine, readNdjsonLines } from "@/lib/progress";
 import type { CodeGraph } from "@/lib/types";
+
+import { ProgressStage, type PipelineStage } from "./ProgressStage";
 
 /** Validated shape of a 200 response from POST /api/analyze. */
 export interface AnalyzeResponse {
@@ -27,6 +30,12 @@ export interface AnalyzeResponse {
   changeSet?: ChangeSet;
   /** True when the response was served from a saved snapshot (Phase 6). */
   fromCache?: boolean;
+  /**
+   * True when the size guard forced the summarized skim city (Phase 7):
+   * buildings sized by lines of code, no per-file functions or import
+   * roads — the "large repository" warning in `warnings` explains it.
+   */
+  skim?: boolean;
 }
 
 /* ------------------------------------------------------------------ *
@@ -179,7 +188,8 @@ function isAnalyzeResponse(value: unknown): value is AnalyzeResponse {
     value.warnings.every(isWarning) &&
     isStr(value.repoKey) &&
     (value.changeSet === undefined || isChangeSet(value.changeSet)) &&
-    (value.fromCache === undefined || value.fromCache === true)
+    (value.fromCache === undefined || value.fromCache === true) &&
+    (value.skim === undefined || value.skim === true)
   );
 }
 
@@ -188,15 +198,52 @@ function isAnalyzeResponse(value: unknown): value is AnalyzeResponse {
 
 type ImportMode = "local" | "github";
 
-async function analyze(request: { source: "local"; path: string } | { source: "github"; repoUrl: string }): Promise<AnalyzeResponse> {
+type AnalyzeRequest = { source: "local"; path: string } | { source: "github"; repoUrl: string };
+
+/**
+ * POST /api/analyze with Phase 7 stage feedback.
+ *
+ * The form opts into the NDJSON stream (Accept: application/x-ndjson): the
+ * response body carries coarse progress lines before the final result, and
+ * `onStage` reports each as it arrives. If the server answers with the
+ * single-JSON shape instead (a proxy buffering the stream, an older route),
+ * this falls back to parsing the body exactly as before — the server's
+ * header negotiation keeps both paths valid.
+ */
+async function analyze(request: AnalyzeRequest, onStage?: (stage: PipelineStage) => void): Promise<AnalyzeResponse> {
   const response = await fetch("/api/analyze", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Accept: NDJSON_ACCEPT },
     body: JSON.stringify(request),
   });
-  // A 400 body is { error }; a network/HTML failure may not parse at all.
-  const body: unknown = await response.json().catch(() => null);
 
+  if (response.ok && response.body !== null && isNdjsonContentType(response.headers.get("Content-Type"))) {
+    let result: AnalyzeResponse | null = null;
+    let lineError: string | null = null;
+    for await (const line of readNdjsonLines(response.body)) {
+      const event = parseNdjsonLine(line);
+      if (event === null) {
+        continue; // defensive: malformed/blank line — the next line decides
+      }
+      if (event.type === "progress") {
+        onStage?.({ stage: event.stage, detail: event.detail });
+      } else if (event.type === "error") {
+        throw new Error(event.error);
+      } else if (isAnalyzeResponse(event.result)) {
+        result = event.result;
+      } else {
+        lineError = "CityCode: the response did not match the expected shape";
+      }
+    }
+    if (result !== null) {
+      return result;
+    }
+    throw new Error(lineError ?? "Analysis failed — the response stream ended without a result");
+  }
+
+  // Single-JSON path: a 400 body is { error }; a network/HTML failure may
+  // not parse at all.
+  const body: unknown = await response.json().catch(() => null);
   if (!response.ok || !isAnalyzeResponse(body)) {
     if (isRecord(body) && isStr(body.error)) {
       throw new Error(body.error);
@@ -210,25 +257,29 @@ export function ImportForm({ onSuccess }: { onSuccess: (data: AnalyzeResponse) =
   const [mode, setMode] = useState<ImportMode>("local");
   const [path, setPath] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
+  const [stage, setStage] = useState<PipelineStage | null>(null);
 
   const currentValue = mode === "local" ? path : repoUrl;
   const setValue = mode === "local" ? (value: string) => setPath(value) : (value: string) => setRepoUrl(value);
 
   const mutation = useMutation({
-    mutationFn: analyze,
-    onSuccess: (data) => onSuccess(data),
+    mutationFn: (request: AnalyzeRequest) => analyze(request, setStage),
+    onSuccess: (data) => {
+      setStage(null);
+      onSuccess(data);
+    },
+    onError: () => setStage(null),
   });
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = currentValue.trim();
     if (trimmed.length === 0 || mutation.isPending) return;
+    setStage(null);
     mutation.mutate(
       mode === "local" ? { source: "local", path: trimmed } : { source: "github", repoUrl: trimmed },
     );
   };
-
-  const pendingLabel = mode === "local" ? "parsing files…" : "cloning repo…";
 
   return (
     <form onSubmit={handleSubmit} className="mt-4 space-y-2.5">
@@ -278,8 +329,9 @@ export function ImportForm({ onSuccess }: { onSuccess: (data: AnalyzeResponse) =
         disabled={mutation.isPending || currentValue.trim().length === 0}
         className="w-full rounded-md bg-zinc-100 py-1.5 text-xs font-semibold text-zinc-950 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {mutation.isPending ? pendingLabel : "Build city"}
+        {mutation.isPending ? "Building city…" : "Build city"}
       </button>
+      {mutation.isPending ? <ProgressStage stage={stage} /> : null}
       {mutation.isError && mutation.error ? (
         <p role="alert" className="text-xs leading-relaxed text-red-400">
           {mutation.error.message}

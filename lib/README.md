@@ -33,7 +33,32 @@
 #                          imports from the importer's package (one level per
 #                          leading dot), unknown absolute modules → external
 #                          (third-party), unknown relative → unresolved.
-#            buildGraph.ts folder → CodeGraph (deterministic, byte-identical JSON)
+#            buildGraph.ts folder → CodeGraph (deterministic, byte-identical
+#                          JSON). Phase 7: carries MAX_PARSE_FILES (1500) /
+#                          MAX_TOTAL_LOC (400k) size cutoffs + BuildGraphOptions
+#                          { skim?, maxParseFiles?, maxTotalLoc?, onProgress? }
+#                          (the number overrides exist for tests only); above
+#                          the cutoff without skim → SkimRequiredError, which
+#                          the analyze route catches to auto-retry as a skim
+#                          build. isSkimResult() detects the skim graph shape
+#                          (files with no functions, zero edges). Skim = cheap
+#                          fs reads only — per-file LOC, no tree-sitter parse,
+#                          no functions, no edges; a "(repo)" warning explains
+#                          the summarized city. Input-root fs errors map to
+#                          fixed readable messages (ENOENT → "does not exist",
+#                          EACCES/EPERM → "permission denied", ENAMETOOLONG →
+#                          "path is too long", ENOTDIR → "not a folder"); a
+#                          leading UTF-8 BOM is stripped before parse.
+#   progress.ts (Phase 7, top-level lib/) — the NDJSON stream contract for
+#            /api/analyze stage feedback: coarse progress lines
+#            {"type":"progress","stage":…,"detail"?} (cloning/walking/parsing
+#            "<N> files"/layout/saving/loading-snapshot), then
+#            {"type":"result",…} or {"type":"error","error"} as the terminal
+#            line (streamed runs keep HTTP 200). Streaming is negotiated per
+#            request by the Accept header (NDJSON_ACCEPT =
+#            application/x-ndjson); requests without it keep the original
+#            single-JSON response byte-for-byte. Also exports the client-side
+#            line reader/parser used by ImportForm.
 #   city/    graph model → city layout. Implemented: layout.ts — CityLayout
 #            types (Building/District/Road) + computeCityLayout(): deterministic
 #            squarified treemap (Bruls et al. 2000), total-order sorted (area

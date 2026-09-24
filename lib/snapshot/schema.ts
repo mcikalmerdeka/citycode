@@ -77,6 +77,13 @@ export interface Snapshot {
   llmSummaries: Record<string, SnapshotSummary>;
   /** Persisted one-call compare summaries, slotted by compare state. */
   compareSummaries: Record<CompareSummarySlot, string>;
+  /**
+   * True when the captured graph is a Phase 7 skim build (size guard: no
+   * per-file functions, no edges). Optional — pre-Phase-7 snapshots simply
+   * omit it, and full builds never set it. Lets a skim snapshot hit serve
+   * the same summarized-city signal the cold run did.
+   */
+  skim?: boolean;
   /** ISO-8601 capture time — diagnostics only, never correctness. */
   createdAt: string;
 }
@@ -118,5 +125,6 @@ export function isSnapshot(value: unknown): value is Snapshot {
   if (!isRecord(value.llmSummaries) || !isRecord(value.compareSummaries) || !isRecord(value.fileStats)) {
     return false;
   }
+  if (value.skim !== undefined && typeof value.skim !== "boolean") return false;
   return isStr(value.createdAt) && !Number.isNaN(Date.parse(value.createdAt));
 }

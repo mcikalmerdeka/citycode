@@ -84,6 +84,7 @@ export default function Home() {
             <span className="rounded border border-zinc-700/70 px-1 py-px font-mono text-[9px] uppercase tracking-wider text-zinc-500">
               {compareMode === "static" ? "static" : compareMode === "prev" ? "prev (HEAD vs. HEAD~1)" : "workdir"}
               {result?.fromCache ? " · snapshot" : ""}
+              {result?.skim ? " · summarized" : ""}
             </span>
           </div>
           <ImportForm onSuccess={handleSuccess} />

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import path from "node:path";
-import { buildGraph } from "../lib/parser/buildGraph";
+import { buildGraph, isSkimResult } from "../lib/parser/buildGraph";
 import { cleanup, makeTempDir, writeFiles } from "./helpers/fixtures";
 
 const dirs: string[] = [];
@@ -139,5 +139,134 @@ describe("buildGraph — input validation", () => {
     expect(error.message).toMatch(/no supported source files/);
     expect(error.message).toMatch(/2 \.js/);
     expect(error.message).toMatch(/TypeScript\/TSX and Python/);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Phase 7 — size guard, skim mode, error-code surfaces
+ * ------------------------------------------------------------------ */
+
+describe("buildGraph — skim mode (Phase 7 large-repo guard)", () => {
+  it("builds a reduced graph without parsing: loc real, functions and edges empty, repo-level warning", async () => {
+    const root = makeTempDir("citycode-bg-skim-");
+    dirs.push(root);
+    writeFiles(root, [
+      { path: "lib/util.ts", contents: "export function helper(): number { return 42; }\n" },
+      { path: "app.ts", contents: 'import { helper } from "./lib/util";\nexport function run(): number { return helper(); }\n' },
+    ]);
+
+    const { graph, warnings } = await buildGraph(root, "local", { skim: true });
+
+    expect(warnings).toEqual([
+      {
+        path: "(repo)",
+        message:
+          "large repository — summarized city: 2 files, per-file functions and import roads omitted; buildings sized by lines of code",
+      },
+    ]);
+    // Every file is a node with real LOC, but zero parse detail — no
+    // functions and no edges in either direction.
+    expect(graph.files.map((f) => f.id).sort()).toEqual(["app.ts", "lib/util.ts"]);
+    for (const file of graph.files) {
+      expect(file.functions).toEqual([]);
+      expect(file.externalImports).toEqual([]);
+      expect(file.unresolvedImports).toEqual([]);
+      expect(file.loc).toBeGreaterThan(0);
+    }
+    expect(graph.edges).toEqual([]);
+    expect(isSkimResult(graph)).toBe(true);
+  });
+
+  it("skim builds stay byte-identical across runs (determinism contract)", async () => {
+    const root = makeTempDir("citycode-bg-skimdet-");
+    dirs.push(root);
+    writeFiles(root, [
+      { path: "b.ts", contents: "export const b = 1;\n" },
+      { path: "a.ts", contents: "export const a = 2;\n" },
+    ]);
+
+    const first = await buildGraph(root, "local", { skim: true });
+    const second = await buildGraph(root, "local", { skim: true });
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second));
+  });
+
+  it("a file-count overage without skim throws a readable SkimRequiredError", async () => {
+    const root = makeTempDir("citycode-bg-overcut-");
+    dirs.push(root);
+    for (let i = 0; i < 3; i++) {
+      writeFiles(root, [{ path: `f${i}.ts`, contents: `export const v${i} = ${i};\n` }]);
+    }
+
+    await expect(buildGraph(root, "local", { maxParseFiles: 2 })).rejects.toThrow(/above the 2 limit/);
+    await expect(buildGraph(root, "local", { maxParseFiles: 2 })).rejects.toThrow(/skim mode/);
+  });
+
+  it("a total-LOC overage throws the readable cutoff error instead of parsing everything", async () => {
+    const root = makeTempDir("citycode-bg-overloc-");
+    dirs.push(root);
+    writeFiles(root, [
+      { path: "big.ts", contents: `export const big = [\n${Array.from({ length: 20 }, () => "  1,").join("\n")}\n];\n` },
+      { path: "small.ts", contents: "export const s = 1;\n" },
+    ]);
+
+    await expect(buildGraph(root, "local", { maxTotalLoc: 10 })).rejects.toThrow(/lines of code/);
+    await expect(buildGraph(root, "local", { maxTotalLoc: 10 })).rejects.toThrow(/skim mode/);
+  });
+
+  it("signals the walk and parse milestones through onProgress without touching output", async () => {
+    const root = makeTempDir("citycode-bg-prog-");
+    dirs.push(root);
+    writeFiles(root, [{ path: "a.ts", contents: "export const a = 1;\n" }]);
+
+    const events: Array<{ stage: string; files?: number }> = [];
+    const { graph } = await buildGraph(root, "local", {
+      onProgress: (event) => {
+        if (event.stage === "walked") events.push({ stage: "walked", files: event.files });
+        else events.push({ stage: event.stage });
+      },
+    });
+
+    expect(events).toEqual([
+      { stage: "walked", files: 1 },
+      { stage: "parsed" },
+    ]);
+    expect(graph.files).toHaveLength(1);
+  });
+});
+
+describe("buildGraph — fs error-code surfaces (Phase 7)", () => {
+  it("a nonexistent folder maps ENOENT to the 'does not exist' message", async () => {
+    const parent = makeTempDir("citycode-bg-enoent-");
+    dirs.push(parent);
+    const missing = path.join(parent, "vanished");
+
+    await expect(buildGraph(missing)).rejects.toThrow(/input folder does not exist/);
+  });
+
+  it("BOM-leading sources parse the same as clean ones (Windows-authored files)", async () => {
+    const root = makeTempDir("citycode-bg-bom-");
+    dirs.push(root);
+    writeFiles(root, [
+      { path: "bom.ts", contents: "\uFEFFexport function main(): number { return 1; }\n" },
+    ]);
+
+    const { graph, warnings } = await buildGraph(root);
+    expect(warnings).toEqual([]);
+    const file = graph.files.find((f) => f.id === "bom.ts");
+    expect(file?.loc).toBe(1);
+    expect(file?.functions).toEqual([{ name: "main", startLine: 1, endLine: 1 }]);
+  });
+
+  it("CRLF line endings count like editor line counts", async () => {
+    const root = makeTempDir("citycode-bg-crlf-");
+    dirs.push(root);
+    writeFiles(root, [
+      { path: "crlf.ts", contents: "export function a() {\r\n  return 1;\r\n}\r\n" },
+    ]);
+
+    const { graph } = await buildGraph(root);
+    const file = graph.files.find((f) => f.id === "crlf.ts");
+    expect(file?.loc).toBe(3);
+    expect(file?.functions).toEqual([{ name: "a", startLine: 1, endLine: 3 }]);
   });
 });
