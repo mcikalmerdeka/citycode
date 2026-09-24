@@ -15,6 +15,7 @@ import { useCallback, useState } from "react";
 
 import { Legend } from "@/components/city/Legend";
 import { CompareBar } from "@/components/ui/CompareBar";
+import { FileTree } from "@/components/ui/FileTree";
 import { ImportForm, type AnalyzeResponse } from "@/components/ui/ImportForm";
 import { InspectPanel } from "@/components/ui/InspectPanel";
 import { useCityStore } from "@/lib/store";
@@ -138,6 +139,20 @@ export default function Home() {
           <EmptyState />
         )}
       </main>
+
+      {/*
+       * Right sidebar — the IDE-style working directory for the analyzed
+       * repo. Clicking a file selects its building in the city and flies the
+       * camera there; selection consumers react through the same store.
+       */}
+      {result && (
+        <aside className="flex w-72 shrink-0 flex-col border-l border-zinc-800/70 bg-zinc-900/30">
+          <FileTree
+            graph={result.graph}
+            changeSet={compareMode === "static" ? null : (result.changeSet ?? null)}
+          />
+        </aside>
+      )}
     </div>
   );
 }
