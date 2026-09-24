@@ -9,8 +9,11 @@ import type { FileLanguage } from "../types";
  * Node's built-in fs/path for the walk, simple-git for repo questions.
  */
 
-/** Directories never traversed — dependencies, build output, VCS internals, our own cache. */
-const SKIPPED_DIRS: ReadonlySet<string> = new Set([
+/**
+ * Directories never traversed — dependencies, build output, VCS internals, our own cache.
+ * Exported for Phase 6's snapshot fingerprint, which walks the same tree shape.
+ */
+export const SKIPPED_DIRS: ReadonlySet<string> = new Set([
   "node_modules",
   ".git",
   ".next",
@@ -23,8 +26,9 @@ const SKIPPED_DIRS: ReadonlySet<string> = new Set([
  * Extension allowlist — the ONLY extensions that can become graph nodes.
  * An allowlist (not a denylist) means binaries and assets can never sneak in.
  * Supports TypeScript/TSX and Python (Phase 5.5 addition, Python stretch item).
+ * Exported for Phase 6's snapshot fingerprint, which walks the same tree shape.
  */
-const SOURCE_EXTENSIONS: Readonly<Record<string, FileLanguage>> = {
+export const SOURCE_EXTENSIONS: Readonly<Record<string, FileLanguage>> = {
   ".ts": "typescript",
   ".tsx": "tsx",
   ".py": "python",

@@ -138,3 +138,53 @@ export async function cloneRepo(parsed: GitHubRepo): Promise<string> {
 
   return destination.split(path.sep).join("/");
 }
+
+/** ls-remote timeout — a freshness probe must not stall an import. */
+const LS_REMOTE_TIMEOUT_MS = 20_000;
+
+/**
+ * Parse `git ls-remote` output into the HEAD sha: the first line is
+ * "<sha>\tHEAD". Unit-tested; garbage/empty output → undefined.
+ */
+export function parseLsRemoteHead(output: string): string | undefined {
+  const line = output.split("\n").find((candidate) => candidate.includes("HEAD"));
+  if (line === undefined) return undefined;
+  const sha = line.split("\t")[0]?.trim();
+  // 40 hex = SHA-1, 64 = SHA-256 repos — both are valid git object formats.
+  return sha !== undefined && /^[0-9a-f]{40,64}$/i.test(sha) ? sha : undefined;
+}
+
+/**
+ * Resolve a GitHub repo's current remote HEAD sha WITHOUT cloning — one
+ * `git ls-remote <url> HEAD` round-trip (Phase 6: lets /api/analyze compare
+ * a saved snapshot's sha against the remote before deciding to re-clone).
+ *
+ * Returns undefined when the probe fails for any reason (offline, private
+ * repo, timeout) — callers treat that as "freshness unknown" and fall back
+ * to their local-clone state.
+ */
+export async function resolveRemoteHead(httpsUrl: string): Promise<string | undefined> {
+  try {
+    const git = simpleGit({ timeout: { block: LS_REMOTE_TIMEOUT_MS } });
+    const output = await git.listRemote([httpsUrl, "HEAD"]);
+    return parseLsRemoteHead(output);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The HEAD sha of an existing local clone, or undefined when the clone dir
+ * is missing/unreadable (e.g. swept) — never throws.
+ */
+export async function readCloneHeadSha(cloneDir: string): Promise<string | undefined> {
+  try {
+    if (!fs.existsSync(cloneDir)) return undefined;
+    const git = simpleGit(cloneDir);
+    if (!(await git.checkIsRepo())) return undefined;
+    const sha = (await git.revparse("HEAD")).trim();
+    return sha.length > 0 ? sha : undefined;
+  } catch {
+    return undefined;
+  }
+}

@@ -8,10 +8,13 @@
 #            url.ts    (Phase 3) GitHub URL validation/normalization — only
 #                      https://github.com/<owner>/<repo> (+ .git / trailing slash /
 #                      www.); everything else rejected for v1,
-#            clone.ts  (Phase 3) shallow clone (--depth 1 --single-branch) into
+#                      clone.ts  (Phase 3) shallow clone (--depth 1 --single-branch) into
 #                      .citycode-cache/clones/<owner>/<repo>; destination wiped
 #                      first so re-imports get fresh HEAD; best-effort stale-clone
 #                      sweep (>24h); all failures → one fixed readable error.
+#                      Phase 6 additions: parseLsRemoteHead / resolveRemoteHead
+#                      (one ls-remote round-trip for snapshot freshness) and
+#                      readCloneHeadSha (intact-clone detection).
 #   parser/  web-tree-sitter parsing → the shared graph model. Implemented:
 #            sitter.ts     WASM init singleton; grammars load from each grammar
 #                          package's OWN prebuild
@@ -48,7 +51,23 @@
 #            graphCache.ts — in-memory graph store (filled by /api/analyze,
 #            keyed repoKey = source:repoPath via lib/repoKey.ts) + summary
 #            cache keyed (repoKey, headSha, fileId) → one LLM call per file
-#            ever. Phase 6 persists summaries into snapshots.
+#            ever. Phase 6 persists summaries into snapshots (and reads them
+#            back before any LLM call), so reloads are LLM-free.
+#   snapshot/ (Phase 6) The persistence layer — one JSON file per analyzed
+#            repo state under .citycode-cache/snapshots/. schema.ts: the
+#            versioned Snapshot shape (graph + layout + warnings + per-file
+#            llmSummaries stamped with (size, mtimeMs) + compareSummaries
+#            slots "prev:<sha>"/"workdir:<workdirHash>") + isSnapshot guard.
+#            key.ts: filename = local/github-<sha256(repoKey|headSha)[:16]>;
+#            mode is deliberately not a file-key component (compares reuse
+#            the static snapshot's graph+layout and recompute only diffs).
+#            fingerprint.ts: stat-walk state fingerprint for local repos
+#            (same skip list/allowlist as the walker; no contents read) —
+#            catches uncommitted edits that never move HEAD. save.ts:
+#            atomic temp→rename writes, 7-day stale sweep (best-effort),
+#            carryOverSummaries (untouched files keep explanations across
+#            rebuilds). load.ts: fail-soft reads — missing/truncated/
+#            wrong-version files are cache misses, never errors.
 #
 # types.ts holds the shared graph model (CodeGraph/FileNode/SymbolDef/
 # ImportEdge) imported by every layer — static view and both compare modes

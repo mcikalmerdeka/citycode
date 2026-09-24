@@ -117,3 +117,17 @@ export function rememberSummary(repoKey: string, headSha: string | undefined, fi
 export function getCachedSummary(repoKey: string, headSha: string | undefined, fileId: string): string | undefined {
   return summaryCache.get(explainCacheKey(repoKey, headSha, fileId));
 }
+
+/**
+ * Test isolation (Phase 6 snapshot integration): clear every in-memory
+ * store so a route-level test can exercise the snapshot tier, which only
+ * triggers when the warm caches miss.
+ */
+export function resetStoresForTests(): void {
+  graphStore.clear();
+  analysisStore.clear();
+  diffStore.clear();
+  workdirDiffStore.clear();
+  compareSummaryCache.clear();
+  summaryCache.clear();
+}

@@ -6,6 +6,9 @@ import {
   getCompareSummary,
   rememberCompareSummary,
 } from "@/lib/llm/graphCache";
+import { compareSummarySlot } from "@/lib/snapshot/key";
+import { loadSnapshot } from "@/lib/snapshot/load";
+import { saveSnapshot, updateSnapshot } from "@/lib/snapshot/save";
 import { summarizeDiff } from "@/lib/llm/prompts";
 
 /**
@@ -17,6 +20,12 @@ import { summarizeDiff } from "@/lib/llm/prompts";
  * plain-English paragraph. Summaries are cached per (repoKey, state hash):
  * the commit sha for "prev", the workdirHash for "workdir", so re-toggling
  * compare mode is ever one LLM call per compared state.
+ *
+ * Phase 6 adds the persisted tier: before calling the LLM, the route checks
+ * the repo's snapshot file (`compareSummaries`, slotted by mode + state) for
+ * a summary generated in a previous server run; fresh summaries are written
+ * back. Reloading a saved city re-toggles compare views with zero LLM calls
+ * (PRD risk §11).
  *
  * Failure mapping (never a plain 500):
  * - 400 malformed body / unknown repoKey / no compare run in this session
@@ -70,13 +79,16 @@ async function summarizeCommit(repoKey: string): Promise<NextResponse> {
     return NextResponse.json({ summary: cached, cached: true }, { status: 200 });
   }
 
+  const slot = compareSummarySlot("prev", diff.headSha);
+
   if (diff.files.length === 0) {
     const emptySummary = "No files changed between these two commits.";
     rememberCompareSummary(repoKey, diff.headSha, emptySummary);
+    persist(repoKey, slot, diff.headSha, emptySummary);
     return NextResponse.json({ summary: emptySummary, cached: false }, { status: 200 });
   }
 
-  return generate(repoKey, diff.headSha, () => summarizeDiff(diff.files));
+  return generate(repoKey, diff.headSha, slot, diff.headSha, () => summarizeDiff(diff.files));
 }
 
 /** The workdir-compare summary: unified change set → paragraph, cached per workdirHash. */
@@ -94,31 +106,64 @@ async function summarizeWorkdir(repoKey: string): Promise<NextResponse> {
     return NextResponse.json({ summary: cached, cached: true }, { status: 200 });
   }
 
+  const slot = compareSummarySlot("workdir", diff.workdirHash);
+
   if (diff.files.length === 0) {
     const emptySummary = "The working directory is clean — nothing is about to be committed.";
     rememberCompareSummary(repoKey, diff.workdirHash, emptySummary);
+    persist(repoKey, slot, diff.headSha, emptySummary);
     return NextResponse.json({ summary: emptySummary, cached: false }, { status: 200 });
   }
 
-  return generate(repoKey, diff.workdirHash, () => summarizeDiff(diff.files));
+  return generate(repoKey, diff.workdirHash, slot, diff.headSha, () => summarizeDiff(diff.files));
 }
 
-/** Shared tail: config check → LLM call → cache recency — 503/502 mapping. */
+/**
+ * Shared tail: persisted snapshot check → config check → LLM call → caches.
+ * `cacheSha` keys the in-memory cache; `slot` + `snapshotHeadSha` address the
+ * persisted tier. 503/502 mapping identical to /api/explain.
+ */
 async function generate(
   repoKey: string,
   cacheSha: string | undefined,
+  slot: string,
+  snapshotHeadSha: string | undefined,
   summarize: () => Promise<{ summary: string }>,
 ): Promise<NextResponse> {
+  // Phase 6 persisted tier: a summary from a previous server run.
+  const snapshot = loadSnapshot(repoKey, snapshotHeadSha);
+  const persisted = snapshot?.compareSummaries[slot];
+  if (persisted !== undefined) {
+    rememberCompareSummary(repoKey, cacheSha, persisted);
+    return NextResponse.json({ summary: persisted, cached: true }, { status: 200 });
+  }
+
   try {
     // Config check happens via the shared client; a missing key aborts with
     // its readable LlmConfigError message (503, degrades — no crash).
     getLlmClient();
     const { summary } = await summarize();
     rememberCompareSummary(repoKey, cacheSha, summary);
+    if (snapshot !== undefined) {
+      snapshot.compareSummaries[slot] = summary;
+      saveSnapshot(snapshot, repoKey, snapshotHeadSha);
+    }
     return NextResponse.json({ summary, cached: false }, { status: 200 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "CityCode: change summary failed";
     const status = error instanceof LlmConfigError ? 503 : 502;
     return NextResponse.json({ error: message }, { status });
   }
+}
+
+/** Persist a summary into the snapshot (best-effort; missing file → no-op). */
+function persist(
+  repoKey: string,
+  slot: string,
+  snapshotHeadSha: string | undefined,
+  summary: string,
+): void {
+  updateSnapshot(repoKey, snapshotHeadSha, (snap) => {
+    snap.compareSummaries[slot] = summary;
+  });
 }

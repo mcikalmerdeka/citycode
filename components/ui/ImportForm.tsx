@@ -25,6 +25,8 @@ export interface AnalyzeResponse {
   repoKey: string;
   /** Classified change record — present when the request used mode "prev" (Phase 4). */
   changeSet?: ChangeSet;
+  /** True when the response was served from a saved snapshot (Phase 6). */
+  fromCache?: boolean;
 }
 
 /* ------------------------------------------------------------------ *
@@ -176,7 +178,8 @@ function isAnalyzeResponse(value: unknown): value is AnalyzeResponse {
     Array.isArray(value.warnings) &&
     value.warnings.every(isWarning) &&
     isStr(value.repoKey) &&
-    (value.changeSet === undefined || isChangeSet(value.changeSet))
+    (value.changeSet === undefined || isChangeSet(value.changeSet)) &&
+    (value.fromCache === undefined || value.fromCache === true)
   );
 }
 

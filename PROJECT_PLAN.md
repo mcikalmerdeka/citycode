@@ -8,7 +8,7 @@
 >
 > **Status legend:** ✅ done · 🚧 in progress · ⬜ pending · ⏸️ deferred · ❌ cancelled
 >
-> Last updated: 2026-09-24 (Phase 5 complete)
+> Last updated: 2026-09-24 (Phase 6 complete)
 
 ---
 
@@ -254,7 +254,7 @@ Phase 3's `--depth 1` clone meant a GitHub import had exactly one commit, so "Pr
 
 ---
 
-## Phase 6 — Save / Reload Snapshots ⬜ (0%)
+## Phase 6 — Save / Reload Snapshots ✅ (100%)
 
 **Goal:** Reopening a previously visualized repo loads instantly from a local JSON snapshot — no re-clone, no re-parse, no repeat LLM calls (PRD milestone 5).
 
@@ -266,18 +266,24 @@ Phase 3's `--depth 1` clone meant a GitHub import had exactly one commit, so "Pr
 - `/api/analyze` integration — cache-first path
 
 ### Tasks
-- [ ] Snapshot contents: `{ version, source, repoPath|url, headSha, workdirHash?, graph, layout, changeSet?, llmSummaries, createdAt }`
-- [ ] `key.ts`: key = `(normalized source path|URL, mode, headSha)`; for workdir mode add `workdirHash`. Normalize all paths to forward slashes (Windows portability — see Phase 1)
-- [ ] Save on every successful generate; atomic write (write temp → rename)
-- [ ] Load path: `/api/analyze` checks the snapshot **first** → returns `{ fromCache: true }` and skips clone/parse entirely
-- [ ] Invalidation: sha mismatch → regenerate; workdir mode with unchanged sha → reuse graph+layout, recompute only the diff
-- [ ] Persist `llmSummaries` — reload must trigger **zero** LLM calls for previously explained files (PRD risk §11, fully closed here)
+- [x] Snapshot contents: `{ version, source, repoPathOrUrl, headSha, stateFingerprint, fileStats, graph, layout, warnings, llmSummaries, compareSummaries, createdAt }` (`lib/snapshot/schema.ts`, `SNAPSHOT_VERSION = 1`, structural guard `isSnapshot` for corruption detection). Plus the plan's `changeSet?`/`workdirHash?` fields are deliberately NOT persisted: compare diffs are recomputed live (cheap git calls, and always fresh), while the expensive artifact — the LLM change summary — IS persisted via `compareSummaries` slots (`"prev:<sha>"` / `"workdir:<workdirHash>"`)
+- [x] `key.ts`: the snapshot FILE key is `(repoKey, headSha)` — `repoKey` ("local:<forward-slashed abs folder>" / "github:<clone cache path>", both stable across restarts) bundles the normalized source identity, so paths normalize to forward slashes with zero extra work. **Deliberate divergence: mode is not part of the file key** — compare modes reuse the static snapshot's graph + layout verbatim (the Phase 4/5 frozen-layout contract) and recompute only the diff, so there is no per-mode artifact beyond the summary slots. Filenames are `local-<16hex>.json` / `github-<16hex>.json` under `.citycode-cache/snapshots/`
+- [x] Save on every successful generate; atomic write (temp file in the same directory → rename, so a crash can never leave a half-valid snapshot); stale-snapshot sweep >7 days (best-effort, mirrors the clone sweep). Saving is best-effort — a failing disk degrades to Phase 5 behavior, never an error
+- [x] Load path: `/api/analyze` is now a 3-tier lookup — warm in-memory compare → **snapshot** → cold build. A snapshot hit returns `{ fromCache: true }` and skips clone/parse entirely; the loaded graph + layout are re-hydrated into the in-memory stores so explain/summarize/compare keep working after a server restart. **Freshness beyond the plan's sha-only rule:** local repos get a stat-walk state fingerprint (same skip list + allowlist as the parser, no file contents read) because the static city reflects the ON-DISK tree — uncommitted edits change the city without moving HEAD, and a sha-only key would serve stale cities. GitHub hits additionally require an intact clone whose HEAD matches the snapshot plus a cheap `git ls-remote` probe (a moved remote → fresh clone; a failed probe e.g. offline → intact clone still served, so reloads survive without network)
+- [x] Invalidation: local fingerprint mismatch (tree edited, branch switched) or missing/unknown-sha snapshot → regenerate; workdir mode reuses graph + layout and recomputes only the diff (the diff is never persisted, so it is always live)
+- [x] Persist `llmSummaries` — `/api/explain` checks the snapshot before calling the LLM and writes fresh summaries back, stamped with the file's `(size, mtimeMs)`; `carryOverSummaries()` keeps only untouched files' summaries across rebuilds (editing one file no longer discards every explanation). `/api/summarize` likewise reads/backs `compareSummaries`. **Reload = zero LLM calls for previously explained files (PRD risk §11, fully closed here)**
 
 ### Acceptance
-1. Generate → close → regenerate the same repo: served from snapshot, visually instant compared to the original parse (target: < 1s vs. multi-second)
-2. Make a new commit → regenerate: cache invalidated, fresh graph
-3. Reload → click a previously-explained file → summary appears instantly, zero LLM calls in the dev log
-4. Corrupt/truncated snapshot → detected, silently regenerated (never crash on bad cache)
+1. ✅ Regenerate the same repo → served from snapshot (`fromCache: true`), graph + layout byte-identical to the cold run (route-level test; the persistent-layout determinism contract makes "visually instant" hold by construction — < 1 s vs multi-second is inherent: no clone, no WASM parse)
+2. ✅ New commit → cache invalidated, fresh graph containing the new file (tested: commit fixture file → next analyze misses the snapshot, new headSha snapshot file created)
+3. ✅ Reload → clicking a previously-explained file serves the persisted summary with `cached: true` and never reaches the LLM client (persisted-tier read/write is unit-verified; the full dev-log check needs a live `OPENAI_API_KEY` session — optional manual pass)
+4. ✅ Corrupt/truncated/zero-byte/wrong-version snapshot files → all detected by parse + structural guard, treated as a cache miss, silently regenerated (tested end-to-end: garbage file → clean regenerate → valid file rewritten)
+
+### Documented Phase 6 decisions (divergences from the plan, with reasons)
+- **Mode is not a file-key component** — compares reuse the static snapshot's graph + layout and recompute only cheap diffs; per-mode persistence is the summary slots (`key.ts` header explains this)
+- **`changeSet`/`workdirHash` are not persisted** — diff recompute is cheap and always fresh; persisting them would add staleness risk for zero gain
+- **Local freshness uses a stat-walk fingerprint, not just the sha** — required so uncommitted edits invalidate the static snapshot (the city is built from disk, not from HEAD)
+- **GitHub snapshot hits require an intact matching clone** — diff modes need the real repo on disk to answer; the `ls-remote` probe prevents serving stale snapshots after the remote moved
 
 ---
 
@@ -325,7 +331,7 @@ Phase 3's `--depth 1` clone meant a GitHub import had exactly one commit, so "Pr
 | Layout stability between compare views | Phase 2 (deterministic layout) + Phase 4 (layout frozen from HEAD graph; classification never re-lays) |
 | Local-folder edge cases (untracked, renames, deletions) | Phase 5 |
 | Parsing performance on large repos | Phase 7 (cutoff + summarize fallback) |
-| LLM cost/latency | Phase 3 (in-memory cache) → Phase 6 (persisted in snapshot; reload = zero calls) |
+| LLM cost/latency | Phase 3 (in-memory cache) → Phase 6 persisted in snapshots + per-file stat stamping (reload = zero calls; untouched files keep explanations across rebuilds) ✅ |
 
 ## Milestone Traceability
 
@@ -347,7 +353,7 @@ Phase 3's `--depth 1` clone meant a GitHub import had exactly one commit, so "Pr
 
 ## Currently Working On
 
-**Phase 5 — complete (2026-09-24).** Working-directory compare ("About to commit") fully wired: `lib/git/workdir.ts` (`workdirDiff`: one `git status --porcelain -uall` pass merged into a per-file change set + sha-256 `workdirHash`, one `git diff -M HEAD` pass for hunk details of tracked files), `lib/diff/apply.ts` gained `applyWorkdirDiff` + the `foundation` status (shared blast-radius machinery with `applyCommitDiff`), `/api/analyze` `mode: "workdir"` reusing the stored static analysis (zero layout shift), `/api/summarize` with a `mode` param cached per workdir hash, and UI enablement: both compare buttons gated on git-ness, foundation slabs in `Buildings.tsx` (flattened in place) + `ChangeOverlays.tsx` (slots for post-import files), legend row, `untracked` count in the summary line. 101/101 tests green (12 new), `tsc`/lint/build clean. Browser walkthrough not run this session (per user instruction — no browser automation without permission); a manual static → prev → about-to-commit toggle pass in the dev server before signing off is optional. Next up: **Phase 6 — snapshots** (`lib/snapshot/` schema, save/load, key derivation, cache-first `/api/analyze`, persisted LLM summaries).
+**Phase 6 — complete (2026-09-24).** Save/reload snapshots fully wired: `lib/snapshot/` (`schema.ts` versioned shape + corruption guard, `key.ts` deterministic `(repoKey, headSha)` filenames under `.citycode-cache/snapshots/`, `fingerprint.ts` stat-walk state fingerprint for local repos, `save.ts` atomic temp→rename writes + `carryOverSummaries`, `load.ts` fail-soft reads), `/api/analyze` 3-tier lookup (warm memory → snapshot → cold build) with store hydration + `fromCache` flag and snapshot save on every generate, GitHub freshness via intact-clone sha + `git ls-remote` probe (`lib/git/clone.ts` gained `parseLsRemoteHead`/`resolveRemoteHead`/`readCloneHeadSha`), and persisted LLM summaries: `/api/explain` and `/api/summarize` read snapshots before any LLM call and write fresh summaries back. 119/119 tests green (18 new in `tests/snapshot.test.ts`, including route-level acceptance tests: byte-identical snapshot reload, commit invalidation, corrupt-file regeneration, cold compare from snapshot), `tsc`/lint/build clean. Browser walkthrough not run this session (per user instruction — no browser automation without permission). Next up: **Phase 7 — hardening & polish** (large-repo guard, stage feedback, error-surface sweep, README).
 
 ## Quick Status
 
@@ -359,5 +365,5 @@ Phase 3's `--depth 1` clone meant a GitHub import had exactly one commit, so "Pr
 | 3 | GitHub import + LLM inspect | ✅ | 100 |
 | 4 | Compare: HEAD vs. HEAD~1 | ✅ | 100 |
 | 5 | Compare: HEAD vs. workdir | ✅ | 100 |
-| 6 | Save / reload snapshots | ⬜ | 0 |
+| 6 | Save / reload snapshots | ✅ | 100 |
 | 7 | Hardening & polish | ⬜ | 0 |
