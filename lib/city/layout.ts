@@ -578,3 +578,91 @@ function districtFor(node: DistrictNode, rect: Rect): District {
     depth: node.depth,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Additive render-time helpers (Phase 3D) — pure functions the renderer may
+// use to derive presentation geometry. They are NOT part of computeCityLayout
+// and never touch its output: the persisted layout contract (center-to-center
+// roads) is byte-identical with or without these helpers.
+// ---------------------------------------------------------------------------
+
+/** Gap (world units) between a building's footprint edge and a road endpoint. */
+const ROUTE_EDGE_GAP = 0.5;
+
+/**
+ * Deterministic 32-bit string hash (the same multiply-xor family the renderer
+ * already uses for slot hashing) — the source of stable "coin flips" for
+ * routing orientation. Never Math.random: same input, same route, always.
+ */
+function hashString(value: string): number {
+  let hash = 7;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) | 0;
+  }
+  return hash >>> 0;
+}
+
+/**
+ * Route one road between two buildings as a Manhattan-style path:
+ * building-edge → single 90° corner → building-edge, instead of a straight
+ * center-to-center diagonal that cuts through everything.
+ *
+ * Rules (all deterministic, all defensive):
+ * - Orientation (X-then-Z vs Z-then-X) is a stable per-edge coin flip hashed
+ *   from the endpoint ids, so a street grid emerges without randomness.
+ * - Endpoints are trimmed from the building CENTER out to the footprint edge
+ *   plus {@link ROUTE_EDGE_GAP}, so ribbons visually meet walls instead of
+ *   vanishing under the buildings (buildings are opaque; an untrimmed center
+ *   segment would be hidden anyway, but trimmed endpoints read as curbside).
+ * - When the two buildings already share an axis the route degenerates to a
+ *   straight 2-point line (no fake corner).
+ * - The result is never empty and never contains coincident neighbors —
+ *   callers can feed it straight into a ribbon/line builder.
+ */
+export function routeRoad(from: Building, to: Building): Array<{ x: number; z: number }> {
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  // Coincident centers (pathological input): nothing sensible to route.
+  if (dx === 0 && dz === 0) {
+    return [
+      { x: from.x, z: from.z },
+      { x: to.x, z: to.z },
+    ];
+  }
+
+  const horizontalFirst = (hashString(`${from.fileId}→${to.fileId}`) & 1) === 0;
+  const aligned = dx === 0 || dz === 0;
+  const corner = aligned
+    ? null
+    : horizontalFirst
+      ? { x: to.x, z: from.z }
+      : { x: from.x, z: to.z };
+
+  const points: Array<{ x: number; z: number }> = [
+    { x: from.x, z: from.z },
+    ...(corner === null ? [] : [corner]),
+    { x: to.x, z: to.z },
+  ];
+
+  // Trim the first/last points outward to the footprint edge. The trimmed
+  // point slides along the segment direction by (half-extent + gap); a
+  // segment shorter than the trim distance is left untouched (better a
+  // slightly long road than a flipped one).
+  const trimEndpoint = (building: Building, keep: number, move: number): void => {
+    const segX = points[move].x - points[keep].x;
+    const segZ = points[move].z - points[keep].z;
+    const length = Math.hypot(segX, segZ);
+    if (length === 0) return;
+    const halfExtent = Math.abs(segX) >= Math.abs(segZ) ? building.w / 2 : building.d / 2;
+    const trim = halfExtent + ROUTE_EDGE_GAP;
+    if (trim >= length) return;
+    points[keep] = {
+      x: points[keep].x + (segX / length) * trim,
+      z: points[keep].z + (segZ / length) * trim,
+    };
+  };
+  trimEndpoint(from, 0, 1);
+  trimEndpoint(to, points.length - 1, points.length - 2);
+
+  return points;
+}

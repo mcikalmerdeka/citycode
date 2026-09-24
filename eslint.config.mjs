@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // CityCode's own runtime cache: cloned GitHub repos (gitignored). Generated
+    // third-party code, not part of this app — never lint it.
+    ".citycode-cache/**",
   ]),
 ]);
 

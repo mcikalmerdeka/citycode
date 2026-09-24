@@ -108,6 +108,7 @@ export function InspectPanel({
 }) {
   const selectedId = useCityStore((state) => state.selectedId);
   const select = useCityStore((state) => state.select);
+  const requestFocus = useCityStore((state) => state.requestFocus);
 
   const selection = useMemo<Selection | null>(() => {
     if (graph === null || selectedId === null) return null;
@@ -139,12 +140,34 @@ export function InspectPanel({
         <p className="min-w-0 break-all font-mono text-xs leading-relaxed text-zinc-200">
           {selection.path}
         </p>
-        <button
-          type="button"
-          onClick={() => select(null)}
-          aria-label="Clear selection"
-          className="shrink-0 rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
-        >
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              if (selectedId !== null) requestFocus(selectedId);
+            }}
+            aria-label="Center view on this building"
+            title="Center view on this building"
+            className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+          >
+            <svg
+              viewBox="0 0 12 12"
+              className="h-3 w-3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              aria-hidden="true"
+            >
+              <circle cx="6" cy="6" r="3.2" />
+              <path d="M6 0.8v2M6 9.2v2M0.8 6h2M9.2 6h2" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => select(null)}
+            aria-label="Clear selection"
+            className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+          >
           <svg
             viewBox="0 0 12 12"
             className="h-3 w-3"
@@ -155,7 +178,8 @@ export function InspectPanel({
           >
             <path d="M2 2l8 8M10 2l-8 8" />
           </svg>
-        </button>
+          </button>
+        </div>
       </div>
 
       <div className="mt-3 flex gap-5">
