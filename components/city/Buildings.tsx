@@ -281,7 +281,6 @@ export function Buildings({
 
   const hoverRef = useRef<THREE.Mesh>(null);
   const selectionMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
-  const ringRef = useRef<THREE.Mesh>(null);
 
   useFrame(({ clock }) => {
     // --- Fresh-rise: override the fresh instances' matrices until done. ---
@@ -326,9 +325,6 @@ export function Buildings({
       const wave = Math.sin(clock.elapsedTime * PULSE_SPEED);
       if (selectionMaterialRef.current !== null) {
         selectionMaterialRef.current.emissiveIntensity = PULSE_BASE + PULSE_AMPLITUDE * wave;
-      }
-      if (ringRef.current !== null) {
-        ringRef.current.scale.setScalar(1 + 0.05 * wave);
       }
     }
   });
@@ -422,27 +418,6 @@ export function Buildings({
               emissiveIntensity={PULSE_BASE}
               roughness={0.85}
               metalness={0}
-            />
-          </mesh>
-          {/* Ground spotlight ring under the selected building. */}
-          <mesh
-            ref={ringRef}
-            position={[selected.x, 0.34, selected.z]}
-            rotation-x={-Math.PI / 2}
-          >
-            <ringGeometry
-              args={[
-                Math.max(selected.w, selected.d) * 0.85,
-                Math.max(selected.w, selected.d) * 1.2,
-                48,
-              ]}
-            />
-            <meshBasicMaterial
-              color={SELECTED_EMISSIVE}
-              transparent
-              opacity={0.7}
-              side={THREE.DoubleSide}
-              depthWrite={false}
             />
           </mesh>
         </group>
