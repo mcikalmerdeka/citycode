@@ -18,6 +18,7 @@ import { CompareBar } from "@/components/ui/CompareBar";
 import { FileTree } from "@/components/ui/FileTree";
 import { ImportForm, type AnalyzeResponse } from "@/components/ui/ImportForm";
 import { InspectPanel } from "@/components/ui/InspectPanel";
+import { GuidanceModal } from "@/components/ui/GuidanceModal";
 import { useCityStore } from "@/lib/store";
 
 const CityScene = dynamic(
@@ -63,6 +64,7 @@ export default function Home() {
   const showLabels = useCityStore((state) => state.showLabels);
   const toggleLabels = useCityStore((state) => state.toggleLabels);
   const compareMode = useCityStore((state) => state.compareMode);
+  const [guidanceOpen, setGuidanceOpen] = useState(false);
 
   const handleSuccess = useCallback(
     (data: AnalyzeResponse) => {
@@ -126,14 +128,25 @@ export default function Home() {
               isGitRepo={result.graph.headSha !== undefined}
               onCompareResult={handleCompareResult}
             />
-            <button
-              type="button"
-              onClick={toggleLabels}
-              aria-pressed={showLabels}
-              className="absolute right-3 top-3 z-20 rounded-md border border-zinc-700/80 bg-zinc-900/80 px-2.5 py-1 text-[11px] font-medium text-zinc-400 backdrop-blur transition-colors hover:text-zinc-200 aria-pressed:border-zinc-100 aria-pressed:bg-zinc-100 aria-pressed:text-zinc-950"
-            >
-              Labels
-            </button>
+            <div className="absolute right-3 top-3 z-20 flex flex-col items-end gap-1.5">
+              <button
+                type="button"
+                onClick={toggleLabels}
+                aria-pressed={showLabels}
+                className="rounded-md border border-zinc-700/80 bg-zinc-900/80 px-2.5 py-1 text-[11px] font-medium text-zinc-400 backdrop-blur transition-colors hover:text-zinc-200 aria-pressed:border-zinc-100 aria-pressed:bg-zinc-100 aria-pressed:text-zinc-950"
+              >
+                Labels
+              </button>
+              <button
+                type="button"
+                onClick={() => setGuidanceOpen(true)}
+                aria-haspopup="dialog"
+                className="rounded-md border border-zinc-700/80 bg-zinc-900/80 px-2.5 py-1 text-[11px] font-medium text-zinc-400 backdrop-blur transition-colors hover:text-zinc-200"
+              >
+                Repo Guidance
+              </button>
+            </div>
+            {result && <GuidanceModal repoKey={result.repoKey} open={guidanceOpen} onClose={() => setGuidanceOpen(false)} />}
           </>
         ) : (
           <EmptyState />

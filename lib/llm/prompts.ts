@@ -6,6 +6,7 @@
 
 import type { CodeGraph, FileNode } from "../types";
 import type { ChangedFile } from "../git/diff";
+import type { KeyFileSelection } from "./keyFiles";
 import { getLlmClient, LLM_REASONING_EFFORT } from "./client";
 
 export const EXPLAIN_SYSTEM_PROMPT =
@@ -134,4 +135,100 @@ export async function summarizeDiff(files: readonly ChangedFile[]): Promise<{ su
     throw new Error("CityCode: the model returned an empty change summary");
   }
   return { summary };
+}
+
+/* ------------------------------------------------------------------ *
+ * Repo guidance — the one-time whole-repo guide
+ * ------------------------------------------------------------------ */
+
+export const REPO_GUIDANCE_SYSTEM_PROMPT =
+  "You explain software repositories to developers in plain English. " +
+  "Given the repository's structure, size statistics, import graph, and the contents of a few key files, " +
+  "produce a guide a newcomer can act on. Answer with exactly four numbered sections, " +
+  "each a short plain-English paragraph or two, no markdown tables, no bullet lists, no code fragments:\n" +
+  "1. What this repo is — one-paragraph identity statement.\n" +
+  "2. Main features — the primary and secondary features, each annotated with the files or folders that implement them.\n" +
+  "3. Ordered reading path — which folders and files to read, in what order, and why each one matters.\n" +
+  "4. Data flow — how a request ends up as output inside this application, narrated over the actual modules.\n" +
+  "Keep the whole answer under about 700 words. If the prompt notes the repo was analyzed in summarized mode, " +
+  "mention that detail in section 3.";
+
+const MAX_GUIDANCE_TREE_LINES = 40;
+const MAX_GUIDANCE_FANIN_LEADERS = 10;
+
+/** The user message for the one-time repo guidance request. */
+export function buildRepoGuidanceUserPrompt(
+  graph: CodeGraph,
+  keyFiles: KeyFileSelection,
+): string {
+  const totalLoc = graph.files.reduce((sum, file) => sum + file.loc, 0);
+  const topDirs = new Map<string, { files: number; loc: number }>();
+  for (const file of graph.files) {
+    const segments = file.id.split("/");
+    const dir = segments.length === 1 ? "(root files)" : segments[0]!;
+    const entry = topDirs.get(dir) ?? { files: 0, loc: 0 };
+    entry.files += 1;
+    entry.loc += file.loc;
+    topDirs.set(dir, entry);
+  }
+  const treeLines = [...topDirs.entries()]
+    .sort((a, b) => b[1].loc - a[1].loc || (a[0] < b[0] ? -1 : 1))
+    .slice(0, MAX_GUIDANCE_TREE_LINES)
+    .map(([dir, entry]) => `${dir} (${entry.files} files, ${entry.loc} lines)`);
+
+  const fanIn = new Map<string, number>();
+  for (const edge of graph.edges) fanIn.set(edge.toId, (fanIn.get(edge.toId) ?? 0) + 1);
+  const fanInLeaders = [...fanIn.entries()]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+    .slice(0, MAX_GUIDANCE_FANIN_LEADERS)
+    .map(([id, count]) => `${id} (${count} importers)`);
+
+  const fileBlocks = keyFiles.files.map((file) => `--- ${file.path}\n${file.contents}`);
+  // Skim-mode graphs carry no functions and no edges — tell the model what
+  // was left out so the guide can caveat itself.
+  const skim =
+    graph.edges.length === 0 && graph.files.every((file) => file.functions.length === 0)
+      ? "(Note: this repo was analyzed in summarized mode — function and edge data was omitted, so answer from paths, sizes, and the excerpts below.)"
+      : "";
+
+  return [
+    `Source: ${graph.source} — ${graph.repoPath}`,
+    `Files: ${graph.files.length} · Total lines of code: ${totalLoc}`,
+    "Top-level folders:",
+    ...treeLines,
+    `Most imported (fan-in leaders): ${fanInLeaders.length === 0 ? "(none)" : fanInLeaders.join(", ")}`,
+    skim,
+    "Key files:",
+    ...fileBlocks,
+    "",
+    "In plain English, produce the four-section repository guide described in your instructions.",
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n");
+}
+
+/**
+ * One LLM chat call generating the repo guide. Model/endpoint come from the
+ * shared client (env-driven). Thrown errors are mapped to user-facing
+ * messages by the route. Same reasoning-notes contract as explainFile:
+ * reasoning effort != none rejects temperature/top_p, so neither is sent.
+ */
+export async function generateRepoGuidance(
+  graph: CodeGraph,
+  keyFiles: KeyFileSelection,
+): Promise<{ guide: string }> {
+  const { client, model } = getLlmClient();
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      { role: "system", content: REPO_GUIDANCE_SYSTEM_PROMPT },
+      { role: "user", content: buildRepoGuidanceUserPrompt(graph, keyFiles) },
+    ],
+    reasoning_effort: LLM_REASONING_EFFORT,
+  });
+  const guide = (response.choices[0]?.message?.content ?? "").trim();
+  if (guide.length === 0) {
+    throw new Error("CityCode: the model returned an empty repository guide");
+  }
+  return { guide };
 }
