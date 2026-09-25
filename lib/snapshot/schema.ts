@@ -78,6 +78,12 @@ export interface Snapshot {
   /** Persisted one-call compare summaries, slotted by compare state. */
   compareSummaries: Record<CompareSummarySlot, string>;
   /**
+   * Whole-repo guidance text (generated once per repo state by
+   * /api/guidance; reopened states serve it from the snapshot). Optional —
+   * pre-guidance snapshots simply omit it, exactly like `skim`.
+   */
+  repoGuidance?: string;
+  /**
    * True when the captured graph is a Phase 7 skim build (size guard: no
    * per-file functions, no edges). Optional — pre-Phase-7 snapshots simply
    * omit it, and full builds never set it. Lets a skim snapshot hit serve
@@ -126,5 +132,6 @@ export function isSnapshot(value: unknown): value is Snapshot {
     return false;
   }
   if (value.skim !== undefined && typeof value.skim !== "boolean") return false;
+  if (value.repoGuidance !== undefined && !isStr(value.repoGuidance)) return false;
   return isStr(value.createdAt) && !Number.isNaN(Date.parse(value.createdAt));
 }

@@ -96,6 +96,31 @@ export function getCompareSummary(repoKey: string, headSha: string | undefined):
   return compareSummaryCache.get(compareSummaryKey(repoKey, headSha));
 }
 
+const guidanceCache = new Map<string, string>();
+
+/**
+ * Repo-guidance cache key: (repoKey, headSha) — headSha "none" when
+ * undefined. Deliberately the same granularity as compareSummaryCache: one
+ * guide per ingested repo state. Known accepted bound (see spec): for
+ * non-git local folders headSha is always "none", so edited-but-uncommitted
+ * state keeps its old guide in this warm tier-1 map until the server
+ * process restarts — the persisted tier self-corrects via the snapshot
+ * fingerprint check in load.ts.
+ */
+export function guidanceCacheKey(repoKey: string, headSha: string | undefined): string {
+  return `${repoKey}\u0000${headSha ?? "none"}`;
+}
+
+/** Remember a freshly generated repo guidance text. */
+export function rememberGuidance(repoKey: string, headSha: string | undefined, guide: string): void {
+  guidanceCache.set(guidanceCacheKey(repoKey, headSha), guide);
+}
+
+/** Get a cached repo guidance text, or undefined. */
+export function getCachedGuidance(repoKey: string, headSha: string | undefined): string | undefined {
+  return guidanceCache.get(guidanceCacheKey(repoKey, headSha));
+}
+
 const summaryCache = new Map<string, string>();
 
 /** Cache key: (repoKey, headSha, fileId) — headSha "none" when undefined. */
@@ -129,5 +154,6 @@ export function resetStoresForTests(): void {
   diffStore.clear();
   workdirDiffStore.clear();
   compareSummaryCache.clear();
+  guidanceCache.clear();
   summaryCache.clear();
 }

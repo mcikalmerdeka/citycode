@@ -55,6 +55,9 @@ other/
 .playwright-mcp/
 fixes/
 
+# Obra Superpowers
+docs/superpowers/
+
 # pnpm lockfile SHOULD be committed - do not ignore it
 
 # vitest JSON reporter output
