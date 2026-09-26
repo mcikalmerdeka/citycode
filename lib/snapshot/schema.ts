@@ -18,8 +18,12 @@ import type { CityLayout } from "../city/layout";
 import type { BuildWarning } from "../parser/buildGraph";
 import type { CodeGraph, GraphSource } from "../types";
 
-/** Bump when the Snapshot shape changes; mismatching files are cache misses. */
-export const SNAPSHOT_VERSION = 1;
+/**
+ * Bump when the Snapshot shape changes; mismatching files are cache misses.
+ * v2: layout metrics changed (larger world, footprint shrink + cap) — old
+ * snapshots would serve stale, denser city geometry.
+ */
+export const SNAPSHOT_VERSION = 2;
 
 /**
  * One persisted per-file explanation. `size`/`mtimeMs` are the source

@@ -27,7 +27,15 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body
+        className="min-h-full flex flex-col"
+        style={{
+          // Small World reference uses a clean system sans; Geist remains the
+          // primary with the system stack as fallback.
+          fontFamily:
+            "var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif",
+        }}
+      >
         <Providers>{children}</Providers>
       </body>
     </html>

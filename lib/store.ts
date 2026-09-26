@@ -19,9 +19,21 @@
  *   re-trigger (subscribers watch the object identity/nonce, not just the
  *   id). The scene's camera rig is the only consumer today; any UI may
  *   produce requests.
+ *
+ * Wave 0 additions (additive only — every pre-existing field keeps its
+ * exact semantics):
+ * - `timeOfDay` / `weather` — ambient scene conditions; the scene reads them
+ *   to drive shader uniforms (SHADER_UNIFORMS) and lighting.
+ * - `simEnabled` — master switch for the living simulation (peds/vehicles);
+ *   off freezes agents without unmounting the scene.
+ * - `resetViewRequest` — a monotonic camera-reset nonce (same pattern as
+ *   `focusRequest`): UI calls `requestResetView()`, the camera rig reacts to
+ *   the counter changing.
  */
 
 import { create } from "zustand";
+
+import type { DayPhase, Weather } from "./city/theme";
 
 /** Which graph the scene renders. Phase 2 only ever shows "static". */
 export type CompareMode = "static" | "prev" | "workdir";
@@ -43,11 +55,23 @@ interface CityState {
   hoveredId: string | null;
   /** Latest camera fly-to request, or null. Consumed by the scene CameraRig. */
   focusRequest: FocusRequest | null;
+  /** Ambient time of day for the scene. */
+  timeOfDay: DayPhase;
+  /** Ambient weather for the scene. */
+  weather: Weather;
+  /** Master switch for the living simulation (pedestrians/vehicles). */
+  simEnabled: boolean;
+  /** Monotonic reset counter — UI increments, camera rig reacts to changes. */
+  resetViewRequest: number;
   select: (id: string | null) => void;
   setCompareMode: (mode: CompareMode) => void;
   toggleLabels: () => void;
   setHovered: (id: string | null) => void;
   requestFocus: (fileId: string) => void;
+  setTimeOfDay: (p: DayPhase) => void;
+  setWeather: (w: Weather) => void;
+  toggleSim: () => void;
+  requestResetView: () => void;
 }
 
 export const useCityStore = create<CityState>((set, get) => ({
@@ -56,6 +80,10 @@ export const useCityStore = create<CityState>((set, get) => ({
   showLabels: false,
   hoveredId: null,
   focusRequest: null,
+  timeOfDay: "noon",
+  weather: "clear",
+  simEnabled: true,
+  resetViewRequest: 0,
   select: (id) => set({ selectedId: id }),
   setCompareMode: (compareMode) => set({ compareMode }),
   toggleLabels: () => set((state) => ({ showLabels: !state.showLabels })),
@@ -66,4 +94,9 @@ export const useCityStore = create<CityState>((set, get) => ({
   },
   requestFocus: (fileId) =>
     set({ focusRequest: { fileId, nonce: (get().focusRequest?.nonce ?? 0) + 1 } }),
+  setTimeOfDay: (p) => set({ timeOfDay: p }),
+  setWeather: (w) => set({ weather: w }),
+  toggleSim: () => set((state) => ({ simEnabled: !state.simEnabled })),
+  requestResetView: () =>
+    set({ resetViewRequest: get().resetViewRequest + 1 }),
 }));

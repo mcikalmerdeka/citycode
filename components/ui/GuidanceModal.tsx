@@ -71,21 +71,21 @@ export function GuidanceModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(32,33,35,0.35)] backdrop-blur-sm"
       onClick={onClose}
     >
       <section
         role="dialog"
         aria-modal="true"
         aria-label="How to navigate this repo"
-        className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-900 shadow-xl"
+        className="panel mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <header className="flex items-center justify-between gap-2 border-b border-zinc-800/70 px-4 py-3">
-          <h2 className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-400">
+        <header className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-4 py-3">
+          <h2 className="eyebrow flex items-center gap-2">
             How to navigate this repo
             {query.data?.cached ? (
-              <span className="rounded border border-zinc-700/70 px-1 font-mono text-[9px] normal-case tracking-normal text-zinc-500">
+              <span className="rounded-full border border-[var(--border)] px-1.5 py-px font-mono text-[9px] normal-case tracking-normal text-[var(--ink-secondary)]">
                 cached
               </span>
             ) : null}
@@ -94,23 +94,23 @@ export function GuidanceModal({
             type="button"
             onClick={onClose}
             aria-label="Close repo guidance"
-            className="text-zinc-500 transition-colors hover:text-zinc-200"
+            className="focus-ring rounded-full p-1 text-[var(--ink-secondary)] transition-colors hover:bg-[var(--paper)] hover:text-[var(--ink)]"
           >
             ✕
           </button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           {query.isPending ? (
-            <p className="text-xs leading-relaxed text-zinc-500">
+            <p className="text-xs leading-relaxed text-[var(--ink-secondary)]">
               thinking… the first run generates a guide for the whole repo and may take up to a
               minute — reopening it afterwards is instant.
             </p>
           ) : query.isError ? (
-            <p role="alert" className="text-xs leading-relaxed text-red-400">
+            <p role="alert" className="text-xs leading-relaxed text-[#C05B4A]">
               {query.error.message}
             </p>
           ) : query.data ? (
-            <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-300">
+            <p className="whitespace-pre-line text-sm leading-relaxed text-[var(--ink)]">
               {query.data.guide}
             </p>
           ) : null}

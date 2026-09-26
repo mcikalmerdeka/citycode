@@ -35,11 +35,11 @@ export function ProgressStage({ stage }: { stage: PipelineStage | null }) {
     <div className="flex items-center gap-1.5" aria-live="polite">
       <span
         aria-hidden="true"
-        className="h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-400"
+        className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--ink-secondary)]"
       />
-      <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+      <p className="eyebrow">
         {STAGE_LABELS[stage.stage]}
-        {stage.detail ? <span className="text-zinc-600"> — {stage.detail}</span> : null}
+        {stage.detail ? <span className="opacity-70"> — {stage.detail}</span> : null}
       </p>
     </div>
   );

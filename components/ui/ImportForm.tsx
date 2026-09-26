@@ -297,11 +297,7 @@ export function ImportForm({ onSuccess }: { onSuccess: (data: AnalyzeResponse) =
             aria-selected={mode === value}
             disabled={mutation.isPending}
             onClick={() => setMode(value)}
-            className={
-              mode === value
-                ? "flex-1 rounded-md border border-zinc-100 bg-zinc-100 px-2 py-1 text-[11px] font-medium text-zinc-950 disabled:opacity-100"
-                : "flex-1 rounded-md border border-zinc-700/80 px-2 py-1 text-[11px] font-medium text-zinc-400 transition-colors hover:text-zinc-200 disabled:opacity-40"
-            }
+            className="pill-button focus-ring flex-1 rounded-full px-2 py-1.5 text-xs disabled:opacity-40"
           >
             {label}
           </button>
@@ -309,7 +305,7 @@ export function ImportForm({ onSuccess }: { onSuccess: (data: AnalyzeResponse) =
       </div>
       <label
         htmlFor="import-path"
-        className="block font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500"
+        className="eyebrow block"
       >
         {mode === "local" ? "Local folder path" : "GitHub repo URL"}
       </label>
@@ -322,18 +318,18 @@ export function ImportForm({ onSuccess }: { onSuccess: (data: AnalyzeResponse) =
         autoComplete="off"
         spellCheck={false}
         disabled={mutation.isPending}
-        className="w-full rounded-md border border-zinc-700/80 bg-zinc-900/60 px-2.5 py-1.5 font-mono text-xs text-zinc-200 transition-colors placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none disabled:opacity-50"
+        className="focus-ring w-full rounded-full border border-[var(--border)] bg-[var(--paper)] px-3.5 py-1.5 font-mono text-xs text-[var(--ink)] transition-colors placeholder:text-[var(--ink-secondary)] focus:border-[var(--ink-secondary)] disabled:opacity-50"
       />
       <button
         type="submit"
         disabled={mutation.isPending || currentValue.trim().length === 0}
-        className="w-full rounded-md bg-zinc-100 py-1.5 text-xs font-semibold text-zinc-950 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+        className="focus-ring w-full rounded-full bg-[var(--accent)] py-1.5 text-xs font-semibold text-[var(--accent-ink)] transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {mutation.isPending ? "Building city…" : "Build city"}
       </button>
       {mutation.isPending ? <ProgressStage stage={stage} /> : null}
       {mutation.isError && mutation.error ? (
-        <p role="alert" className="text-xs leading-relaxed text-red-400">
+        <p role="alert" className="text-xs leading-relaxed text-[#C05B4A]">
           {mutation.error.message}
         </p>
       ) : null}

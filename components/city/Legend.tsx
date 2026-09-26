@@ -3,72 +3,90 @@
  * (it never toggles with showLabels). Pure presentational: no handlers, no
  * pointer events, so it can never steal an orbit click.
  *
- * Swatches reuse the exact scene palette so the key is pixel-honest. In
- * compare modes (Phase 4) the closing "color is reserved" note is replaced
- * by the actual compare color rows.
+ * Restyled to the Small World pill chrome: a white rounded panel using the
+ * Wave-0 tokens. Compare swatch colors come from
+ * `components/city/compareAccent.ts` via its documented contract:
+ * `compareAccent(compareMode, status)` → `{ roofTint?, outline? }`.
+ *
+ * INTEGRATION NOTE (Wave 2.1): that module is being created concurrently by
+ * another agent. This file is written against the documented contract above;
+ * if the shipped module shape differs (e.g. different keys or return fields),
+ * only the COMPARE_ROWS mapping below needs adjusting — the layout and
+ * styling here are contract-independent.
  */
 
+import { compareAccent } from "./compareAccent";
 import { useCityStore } from "@/lib/store";
+import type { CompareMode } from "@/lib/store";
 
 const SWATCH_BOX = "flex h-4 w-4 shrink-0 items-center justify-center";
 
-/** Compare rows — hex values MUST match STATUS_COLORS in Buildings.tsx. */
-const COMPARE_ROWS: Array<{ swatch: string; label: string }> = [
-  { swatch: "h-4 w-1.5 rounded-[1px] bg-[#f59e0b]", label: "construction site · modified" },
-  { swatch: "h-4 w-1.5 rounded-[1px] bg-[#a3e635]", label: "fresh construction · added" },
-  { swatch: "h-0.5 w-4 rounded-[1px] bg-[#e2e8f0]", label: "foundation · untracked (about to commit)" },
-  { swatch: "h-1.5 w-4 rounded-[1px] bg-[#57534e]", label: "rubble · deleted" },
-  { swatch: "h-[2px] w-4 rounded-full bg-[#22d3ee]", label: "moved · renamed" },
-  { swatch: "h-4 w-1.5 rounded-[1px] bg-[#ef4444]", label: "blast radius · importer touched" },
+/** Compare rows — colors resolved through compareAccent(compareMode, status). */
+const COMPARE_ROWS: Array<{ status: string; label: string }> = [
+  { status: "construction", label: "construction site · modified" },
+  { status: "fresh", label: "fresh construction · added" },
+  { status: "foundation", label: "foundation · untracked (about to commit)" },
+  { status: "rubble", label: "rubble · deleted" },
+  { status: "moved", label: "moved · renamed" },
+  { status: "blast", label: "blast radius · importer touched" },
 ];
+
+/** Resolve a swatch color defensively against the compareAccent contract. */
+function accentColor(compareMode: CompareMode, status: string): string {
+  const accent = compareAccent(compareMode, status) as {
+    roofTint?: string;
+    outline?: string;
+  } | null | undefined;
+  return accent?.roofTint ?? accent?.outline ?? "#8E8474";
+}
 
 export function Legend() {
   const compareMode = useCityStore((state) => state.compareMode);
   const comparing = compareMode !== "static";
 
   return (
-    <div className="pointer-events-none absolute left-3 top-3 z-20 w-max rounded-lg border border-zinc-800/80 bg-zinc-950/80 px-3 py-2.5 backdrop-blur-sm">
-      <p className="font-mono text-[9px] uppercase tracking-[0.22em] text-zinc-500">
+    <div className="panel pointer-events-none absolute left-3 top-3 z-20 w-max rounded-2xl px-3.5 py-3">
+      <p className="eyebrow">
         {comparing ? "Compare key" : "City key"}
       </p>
       <ul className="mt-2 space-y-2">
         <li className="flex items-center gap-2.5">
           <span className={SWATCH_BOX} aria-hidden="true">
-            <span className="h-4 w-1.5 rounded-[1px] bg-[#8b8d98]" />
+            <span className="h-4 w-1.5 rounded-[1px] bg-[#B8AFA2]" />
           </span>
-          <span className="text-[11px] leading-none text-zinc-400">
+          <span className="text-[11px] leading-none text-[var(--ink-secondary)]">
             height · lines of code
           </span>
         </li>
         <li className="flex items-center gap-2.5">
           <span className={SWATCH_BOX} aria-hidden="true">
-            <span className="h-1.5 w-4 rounded-[1px] bg-[#8b8d98]" />
+            <span className="h-1.5 w-4 rounded-[1px] bg-[#B8AFA2]" />
           </span>
-          <span className="text-[11px] leading-none text-zinc-400">
+          <span className="text-[11px] leading-none text-[var(--ink-secondary)]">
             footprint · function count
           </span>
         </li>
         <li className="flex items-center gap-2.5">
           <span className={SWATCH_BOX} aria-hidden="true">
-            <span className="h-2 w-4 rounded-[1px] border border-[#3f424c] bg-[#2a2c33]" />
+            <span className="h-2 w-4 rounded-[1px] border border-[var(--border)] bg-[#D0D3C3]" />
           </span>
-          <span className="text-[11px] leading-none text-zinc-400">
+          <span className="text-[11px] leading-none text-[var(--ink-secondary)]">
             block · folder
           </span>
         </li>
         <li className="flex items-center gap-2.5">
           <span className={SWATCH_BOX} aria-hidden="true">
-            <span className="h-[2px] w-4 rounded-full bg-[#5a5d66]" />
+            <span className="h-[2px] w-4 rounded-full bg-[#77746F]" />
           </span>
-          <span className="text-[11px] leading-none text-zinc-400">
+          <span className="text-[11px] leading-none text-[var(--ink-secondary)]">
             line · import road
           </span>
         </li>
         <li className="flex items-center gap-2.5">
           <span className={SWATCH_BOX} aria-hidden="true">
-            <span className="h-3 w-1.5 rounded-[1px] bg-[#8b8d98] shadow-[0_0_6px_rgba(228,163,60,0.75)] ring-1 ring-[#e4a33c]" />
+            <span className="h-3 w-1.5 rounded-[1px] bg-[#D9D3C9] shadow-[0_0_6px_rgba(217,164,65,0.75)] ring-1 ring-[#D9A441]" />
           </span>
-          <span className="text-[11px] leading-none text-zinc-400">
+          <span className="text-[11px] leading-none text-[var(--ink-secondary)]">
             highlight · selected building
           </span>
         </li>
@@ -76,14 +94,17 @@ export function Legend() {
           COMPARE_ROWS.map((row) => (
             <li key={row.label} className="flex items-center gap-2.5">
               <span className={SWATCH_BOX} aria-hidden="true">
-                <span className={row.swatch} />
+                <span
+                  className="h-3 w-3 rounded-[3px] border border-[var(--border)]"
+                  style={{ background: accentColor(compareMode, row.status) }}
+                />
               </span>
-              <span className="text-[11px] leading-none text-zinc-400">{row.label}</span>
+              <span className="text-[11px] leading-none text-[var(--ink-secondary)]">{row.label}</span>
             </li>
           ))}
       </ul>
       {!comparing && (
-        <p className="mt-2.5 border-t border-zinc-800/80 pt-2 text-[10px] leading-snug text-zinc-500">
+        <p className="mt-2.5 border-t border-[var(--border)] pt-2 text-[10px] leading-snug text-[var(--ink-secondary)]">
           color is reserved for compare mode
         </p>
       )}

@@ -53,23 +53,23 @@ export function ExplainPanel({ repoKey, fileId }: { repoKey: string; fileId: str
 
   return (
     <section className="mt-4">
-      <h3 className="flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+      <h3 className="eyebrow flex items-center justify-between">
         What does this file do?
         {query.data?.cached ? (
-          <span className="rounded border border-zinc-700/70 px-1 font-mono text-[9px] normal-case tracking-normal text-zinc-500">
+          <span className="rounded-full border border-[var(--border)] px-1.5 py-px font-mono text-[9px] normal-case tracking-normal text-[var(--ink-secondary)]">
             cached
           </span>
         ) : null}
       </h3>
 
       {query.isPending ? (
-        <p className="mt-1.5 px-1.5 text-[11px] leading-relaxed text-zinc-500">thinking…</p>
+        <p className="mt-1.5 px-1.5 text-[11px] leading-relaxed text-[var(--ink-secondary)]">thinking…</p>
       ) : query.isError ? (
-        <p role="alert" className="mt-1.5 px-1.5 text-[11px] leading-relaxed text-red-400">
+        <p role="alert" className="mt-1.5 px-1.5 text-[11px] leading-relaxed text-[#C05B4A]">
           {query.error.message}
         </p>
       ) : query.data ? (
-        <p className="mt-1.5 px-1.5 text-xs leading-relaxed text-zinc-300">{query.data.summary}</p>
+        <p className="mt-1.5 px-1.5 text-xs leading-relaxed text-[var(--ink)]">{query.data.summary}</p>
       ) : null}
     </section>
   );
