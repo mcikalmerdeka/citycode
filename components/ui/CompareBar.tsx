@@ -111,7 +111,7 @@ export function CompareBar({
       <div
         role="tablist"
         aria-label="Compare view mode"
-        className="flex gap-1 rounded-lg border border-zinc-800/80 bg-zinc-950/80 p-1 backdrop-blur-sm"
+        className="pill flex gap-1 p-1"
       >
         {MODES.map(([value, label, hint]) => {
           const disabled = value !== "static" && !isGitRepo;
@@ -124,11 +124,7 @@ export function CompareBar({
               aria-selected={compareMode === value}
               disabled={disabled}
               onClick={() => setCompareMode(value)}
-              className={
-                compareMode === value
-                  ? "flex-1 rounded-md bg-zinc-100 px-2 py-1 text-[11px] font-medium text-zinc-950 disabled:opacity-40"
-                  : "flex-1 rounded-md px-2 py-1 text-[11px] font-medium text-zinc-400 transition-colors hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-zinc-400"
-              }
+              className="focus-ring flex-1 rounded-full px-2 py-1 text-[11px] font-medium transition-colors text-[var(--ink-secondary)] hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-[var(--ink-secondary)] aria-selected:bg-[var(--accent)] aria-selected:text-[var(--accent-ink)]"
             >
               {label}
             </button>
@@ -137,8 +133,8 @@ export function CompareBar({
       </div>
 
       {active && (
-        <div className="mt-2 rounded-lg border border-zinc-800/80 bg-zinc-950/80 p-3 backdrop-blur-sm">
-          {compareMode === "prev" ? <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">HEAD vs. HEAD~1</p> : <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">HEAD vs. working directory</p>}
+        <div className="panel mt-2 p-3">
+          {compareMode === "prev" ? <p className="eyebrow">HEAD vs. HEAD~1</p> : <p className="eyebrow">HEAD vs. working directory</p>}
           <DiffSummary
             mode={compareMode as ActiveCompareMode}
             changeQuery={changeQuery}
@@ -174,14 +170,14 @@ function DiffSummary({
 }) {
   if (changeQuery.isPending) {
     return (
-      <p className="text-[11px] text-zinc-500">
+      <p className="mt-1 text-[11px] text-[var(--ink-secondary)]">
         {mode === "workdir" ? "comparing the working directory…" : "comparing with the previous commit…"}
       </p>
     );
   }
   if (changeQuery.isError || changeQuery.data === undefined) {
     return (
-      <p role="alert" className="text-[11px] leading-relaxed text-red-400">
+      <p role="alert" className="mt-1 text-[11px] leading-relaxed text-[#C05B4A]">
         {changeQuery.error?.message ?? "Compare unavailable"}
       </p>
     );
@@ -189,7 +185,7 @@ function DiffSummary({
 
   const changeSet: ChangeSet | undefined = changeQuery.data.changeSet;
   if (changeSet === undefined) {
-    return <p className="text-[11px] text-zinc-500">no change data in this analysis</p>;
+    return <p className="mt-1 text-[11px] text-[var(--ink-secondary)]">no change data in this analysis</p>;
   }
   const parts: string[] = [];
   if (changeSet.counts.modified > 0) parts.push(`${changeSet.counts.modified} modified`);
@@ -201,21 +197,21 @@ function DiffSummary({
   return (
     <div>
       <div className="mt-2 flex items-center justify-between">
-        <p className="font-mono text-[10px] text-zinc-400">
+        <p className="font-mono text-[10px] text-[var(--ink-secondary)]">
           {parts.length > 0 ? parts.join(" · ") : "clean — nothing to commit"}
         </p>
       </div>
       <div className="mt-2">
         {summaryQuery.isPending ? (
-          <p className="text-[11px] text-zinc-500">summarizing the changes…</p>
+          <p className="text-[11px] text-[var(--ink-secondary)]">summarizing the changes…</p>
         ) : summaryQuery.isError ? (
-          <p role="alert" className="text-[11px] leading-relaxed text-red-400">
+          <p role="alert" className="text-[11px] leading-relaxed text-[#C05B4A]">
             {summaryQuery.error?.message}
           </p>
         ) : summaryQuery.data ? (
-          <p className="text-[11px] leading-relaxed text-zinc-300">
+          <p className="text-[11px] leading-relaxed text-[var(--ink)]">
             {summaryQuery.data.summary}
-            {summaryQuery.data.cached ? <span className="ml-1.5 text-zinc-600">(cached)</span> : null}
+            {summaryQuery.data.cached ? <span className="ml-1.5 text-[var(--ink-secondary)]">(cached)</span> : null}
           </p>
         ) : null}
       </div>

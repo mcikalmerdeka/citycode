@@ -166,12 +166,12 @@ export function FileTree({
               type="button"
               onClick={() => toggleFolder(node.path)}
               aria-expanded={open}
-              className="flex w-full items-center gap-1.5 rounded px-1.5 py-0.5 text-left transition-colors hover:bg-zinc-800/70"
+              className="focus-ring flex w-full items-center gap-1.5 rounded-lg px-1.5 py-0.5 text-left transition-colors hover:bg-[var(--paper)]"
               style={{ paddingLeft: depth * 12 + 8 }}
             >
               <svg
                 viewBox="0 0 8 8"
-                className={`h-2 w-2 shrink-0 text-zinc-500 transition-transform ${open ? "rotate-90" : ""}`}
+                className={`h-2 w-2 shrink-0 text-[var(--ink-secondary)] transition-transform ${open ? "rotate-90" : ""}`}
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="1.4"
@@ -179,7 +179,7 @@ export function FileTree({
               >
                 <path d="M2.5 1.5 5 4 2.5 6.5" />
               </svg>
-              <span className="truncate font-mono text-[11px] text-zinc-400">{node.name}/</span>
+              <span className="truncate font-mono text-[11px] text-[var(--ink-secondary)]">{node.name}/</span>
             </button>
             {open && <ul className="list-none">{renderRows(node.children, depth + 1)}</ul>}
           </li>
@@ -197,25 +197,27 @@ export function FileTree({
               select(node.path);
               requestFocus(node.path);
             }}
-            className={`flex w-full min-w-0 items-center gap-2 rounded py-0.5 pr-1.5 text-left transition-colors ${
-              active ? "bg-zinc-800/90 ring-1 ring-zinc-600" : "hover:bg-zinc-800/70"
+            className={`focus-ring flex w-full min-w-0 items-center gap-2 rounded-lg py-0.5 pr-1.5 text-left transition-colors ${
+              active
+                ? "bg-[var(--paper)] ring-1 ring-[var(--border)]"
+                : "hover:bg-[var(--paper)]"
             }`}
             style={{ paddingLeft: depth * 12 + 8 }}
           >
             <span
               aria-hidden="true"
               className="h-1.5 w-1.5 shrink-0 rounded-full"
-              style={{ background: status === undefined ? "#5b5f6a" : STATUS_COLORS[status] }}
+              style={{ background: status === undefined ? "#C9C6BF" : STATUS_COLORS[status] }}
             />
             <span
               className={`min-w-0 truncate font-mono text-[11px] ${
-                active ? "text-zinc-100" : "text-zinc-300"
+                active ? "text-[var(--ink)] font-medium" : "text-[var(--ink-secondary)]"
               }`}
             >
               {node.name}
             </span>
             {/* Right-aligned trivial metadata — never the color channel */}
-            <span className="ml-auto shrink-0 font-mono text-[9px] text-zinc-600">
+            <span className="ml-auto shrink-0 font-mono text-[9px] text-[var(--ink-secondary)] opacity-70">
               {node.file?.loc}
             </span>
           </button>
@@ -226,21 +228,21 @@ export function FileTree({
   return (
     <>
       {/* Panel header: what repo this tree belongs to */}
-      <div className="border-b border-zinc-800/70 p-3">
+      <div className="border-b border-[var(--border)] p-3">
         <div className="flex items-baseline justify-between gap-2">
-          <p className="font-mono text-[9px] uppercase tracking-[0.22em] text-zinc-500">
+          <p className="eyebrow">
             Workspace
           </p>
-          <span className="font-mono text-[9px] text-zinc-500">{graph.files.length} files</span>
+          <span className="font-mono text-[9px] text-[var(--ink-secondary)]">{graph.files.length} files</span>
         </div>
-        <p className="mt-1 truncate font-mono text-[10px] text-zinc-400" title={graph.repoPath}>
+        <p className="mt-1 truncate font-mono text-[10px] text-[var(--ink-secondary)]" title={graph.repoPath}>
           {graph.repoPath}
         </p>
       </div>
       {/* The tree itself */}
       <div className="min-h-0 flex-1 overflow-y-auto px-1 py-2">
         {graph.files.length === 0 ? (
-          <p className="px-2 text-[11px] leading-relaxed text-zinc-600">no files parsed</p>
+          <p className="px-2 text-[11px] leading-relaxed text-[var(--ink-secondary)]">no files parsed</p>
         ) : (
           <ul className="list-none">{renderRows(tree, 0)}</ul>
         )}

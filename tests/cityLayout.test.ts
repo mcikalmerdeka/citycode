@@ -87,7 +87,7 @@ function demoGraph(): CodeGraph {
 // is checked against the same regions the engine partitioned.
 // ---------------------------------------------------------------------------
 
-const DEFAULT_TOTAL_AREA = 40000;
+const DEFAULT_TOTAL_AREA = 100000;
 const DEFAULT_DISTRICT_PADDING = 2;
 const ROOT_W = Math.sqrt(DEFAULT_TOTAL_AREA * (4 / 3));
 const ROOT_D = Math.sqrt(DEFAULT_TOTAL_AREA * (3 / 4));
@@ -370,8 +370,8 @@ describe("computeCityLayout — determinism & options", () => {
   it("treats an explicit options object equal to the defaults as identical", () => {
     const implicit = computeCityLayout(demoGraph());
     const explicit = computeCityLayout(demoGraph(), {
-      totalArea: 40000,
-      districtPadding: 2,
+      totalArea: 100000,
+      districtPadding: 4,
       heightPerLoc: 0.1,
       minFootprint: 1,
     });

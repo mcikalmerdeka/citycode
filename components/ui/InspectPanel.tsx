@@ -68,11 +68,11 @@ function FileLinkList({
 }) {
   return (
     <section className="mt-4">
-      <h3 className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+      <h3 className="eyebrow">
         {title} ({files.length})
       </h3>
       {files.length === 0 ? (
-        <p className="mt-1.5 px-1.5 text-[11px] text-zinc-600">none</p>
+        <p className="mt-1.5 px-1.5 text-[11px] text-[var(--ink-secondary)]">none</p>
       ) : (
         <ul className="mt-1.5 space-y-0.5">
           {files.map((file) => (
@@ -80,13 +80,13 @@ function FileLinkList({
               <button
                 type="button"
                 onClick={() => onSelect(file.id)}
-                className="flex w-full items-baseline justify-between gap-2 rounded px-1.5 py-1 text-left transition-colors hover:bg-zinc-800/70"
+                className="focus-ring flex w-full items-baseline justify-between gap-2 rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-[var(--paper)]"
               >
-                <span className="min-w-0 truncate font-mono text-xs text-zinc-300">
+                <span className="min-w-0 truncate font-mono text-xs text-[var(--ink)]">
                   {file.id}
                 </span>
                 {file.edgeCount > 1 ? (
-                  <span className="shrink-0 font-mono text-[10px] text-zinc-500">
+                  <span className="shrink-0 font-mono text-[10px] text-[var(--ink-secondary)]">
                     ×{file.edgeCount}
                   </span>
                 ) : null}
@@ -127,7 +127,7 @@ export function InspectPanel({
   if (selection === null) {
     return (
       <div className="flex h-full items-center justify-center p-6">
-        <p className="text-center text-xs leading-relaxed text-zinc-600">
+        <p className="text-center text-xs leading-relaxed text-[var(--ink-secondary)]">
           Click a building to inspect a file
         </p>
       </div>
@@ -137,7 +137,7 @@ export function InspectPanel({
   return (
     <div className="p-4">
       <div className="flex items-start justify-between gap-2">
-        <p className="min-w-0 break-all font-mono text-xs leading-relaxed text-zinc-200">
+        <p className="min-w-0 break-all font-mono text-xs leading-relaxed text-[var(--ink)]">
           {selection.path}
         </p>
         <div className="flex shrink-0 items-center gap-1">
@@ -148,7 +148,7 @@ export function InspectPanel({
             }}
             aria-label="Center view on this building"
             title="Center view on this building"
-            className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+            className="focus-ring rounded-full p-1 text-[var(--ink-secondary)] transition-colors hover:bg-[var(--paper)] hover:text-[var(--ink)]"
           >
             <svg
               viewBox="0 0 12 12"
@@ -166,7 +166,7 @@ export function InspectPanel({
             type="button"
             onClick={() => select(null)}
             aria-label="Clear selection"
-            className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+            className="focus-ring rounded-full p-1 text-[var(--ink-secondary)] transition-colors hover:bg-[var(--paper)] hover:text-[var(--ink)]"
           >
           <svg
             viewBox="0 0 12 12"
@@ -184,24 +184,24 @@ export function InspectPanel({
 
       <div className="mt-3 flex gap-5">
         <div>
-          <p className="font-mono text-lg leading-none text-zinc-100">{selection.loc}</p>
-          <p className="mt-1 text-[10px] uppercase tracking-wider text-zinc-500">loc</p>
+          <p className="font-mono text-lg leading-none text-[var(--ink)]">{selection.loc}</p>
+          <p className="mt-1 text-[10px] uppercase tracking-wider text-[var(--ink-secondary)]">loc</p>
         </div>
         <div>
-          <p className="font-mono text-lg leading-none text-zinc-100">
+          <p className="font-mono text-lg leading-none text-[var(--ink)]">
             {selection.functions.length}
           </p>
-          <p className="mt-1 text-[10px] uppercase tracking-wider text-zinc-500">functions</p>
+          <p className="mt-1 text-[10px] uppercase tracking-wider text-[var(--ink-secondary)]">functions</p>
         </div>
         <div>
-          <p className="font-mono text-lg leading-none text-zinc-100">{selection.language}</p>
-          <p className="mt-1 text-[10px] uppercase tracking-wider text-zinc-500">language</p>
+          <p className="font-mono text-lg leading-none text-[var(--ink)]">{selection.language}</p>
+          <p className="mt-1 text-[10px] uppercase tracking-wider text-[var(--ink-secondary)]">language</p>
         </div>
       </div>
 
       {selection.functions.length > 0 && (
         <section className="mt-4">
-          <h3 className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+          <h3 className="eyebrow">
             Functions ({selection.functions.length})
           </h3>
           <ul className="mt-1.5 space-y-1.5">
@@ -210,10 +210,10 @@ export function InspectPanel({
                 key={`${fn.name}:${fn.startLine}`}
                 className="flex items-baseline justify-between gap-3"
               >
-                <span className="min-w-0 truncate font-mono text-xs text-zinc-300">
+                <span className="min-w-0 truncate font-mono text-xs text-[var(--ink)]">
                   {fn.name}
                 </span>
-                <span className="shrink-0 font-mono text-[10px] text-zinc-600">
+                <span className="shrink-0 font-mono text-[10px] text-[var(--ink-secondary)]">
                   L{fn.startLine}–{fn.endLine}
                 </span>
               </li>

@@ -1,278 +1,398 @@
 "use client";
 
 /**
- * The static 3D city view — an R3F Canvas rendering a {@link CityLayout}
- * verbatim (no client-side re-derivation of geometry).
+ * The 3D city view — an R3F Canvas rendering a {@link CityLayout} verbatim
+ * (no client-side re-derivation of geometry) plus the living simulation
+ * layer (pedestrians/vehicles/trees, see Simulation.tsx).
  *
- * Visual contract (Phase 2): neutral zinc palette only. Building hue is
- * uniform because color is reserved for the Phase 4/5 compare modes; the
- * single exception is the selection highlight (see Buildings.tsx).
+ * Visual contract (Small World diorama): warm lawn ground on a stacked
+ * wooden slab, soft warm key light, flat page-color backdrop. Color stays
+ * reserved for compare modes; the only hue exception is the selection
+ * highlight (see Buildings.tsx).
  *
- * Phase 3D scene & atmosphere overhaul:
- * - Lighting rig: warm key directional with shadows (frustum tuned to the
- *   200×200 root rect, 2048 map — 1024 past SHADOW_MAP_LOD_THRESHOLD
- *   buildings), a cool hemisphere fill, and a cold rim light from the
- *   opposite side. The old flat ambient+directional pair is gone. Shadow
- *   type is PCF: three r182+ removed PCFSoftShadowMap and made PCFShadowMap
- *   soft by default (Vogel-disk sampling), so "soft" shadow types trip a
- *   deprecation warning in WebGLShadowMap for no quality gain.
- * - Atmosphere: exponential fog blends the city edge into a hand-tuned
- *   gradient sky dome (deep-blue dusk, subtle warm band at the horizon) —
- *   fully procedural, no HDRI/network assets.
- * - Ground: one large plane with a runtime-generated canvas texture (seeded
- *   asphalt speckle + city grid) so the world never reads as a flat void.
- * - CameraRig: OrbitControls plus a store-driven fly-to (see focusRequest in
- *   lib/store.ts). User input mid-tween cancels the flight; a fresh city
- *   remount resets to the default overview.
- * - Postprocessing via @react-three/postprocessing (the single dependency
- *   this phase adds): very low bloom so only emissive glows (selection,
- *   crane beacons, blast pulses) bloom, a screen vignette, and SMAA — the
- *   Canvas' own MSAA is off because SMAA replaces it.
+ * Camera model (orbitMath.ts): an orthographic camera orbits a target point
+ * on a sphere; "zoom" changes the orthographic frustum size (`span`) instead
+ * of raw camera movement, so buildings stay parallel-edged at every zoom —
+ * the model-not-a-world look. Custom pointer controls (NOT drei
+ * OrbitControls, which fight the span-driven frustum):
+ * - left-drag  → pan the target across the ground plane
+ * - wheel      → zoom (span)
+ * - right-drag / ctrl+drag → orbit (azimuth + elevation, clamped)
+ * All motion is exponentially damped; `prefers-reduced-motion` snaps
+ * immediately. User input cancels any in-flight focus/reset tween.
+ *
+ * Lighting: one warm directional key from the upper-left with soft PCF
+ * shadows covering the full root rect (260 half-extent, 2048 map), plus a gentle
+ * warm/cool hemisphere fill. Color/intensity are modulated by
+ * `envParams(timeOfDay, weather)` — sunset warms the key, night drops its
+ * intensity and raises ambient so the diorama stays readable.
+ *
+ * No fog, no gradient sky dome, no post-processing: the diorama floats on
+ * the flat page backdrop.
  */
 
-import { useEffect, useMemo, useRef } from "react";
-import type { ComponentRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
-import { EffectComposer, Bloom, Vignette, SMAA } from "@react-three/postprocessing";
 
 import type { Building, CityLayout } from "@/lib/city/layout";
 import type { ChangeSet } from "@/lib/diff/apply";
+import { derivePathNetwork } from "@/lib/city/paths";
+import { PAGE_COLORS } from "@/lib/city/theme";
 import { useCityStore } from "@/lib/store";
 
 import { Buildings } from "./Buildings";
 import { ChangeOverlays } from "./ChangeOverlays";
 import { Districts } from "./Districts";
 import { Roads } from "./Roads";
-import { installThreeConsoleFilter } from "./threeConsoleFilter";
-
-// Drop the R3F-internal THREE.Clock deprecation warning (removal condition
-// documented in threeConsoleFilter.ts — gone once fiber v10 stable ships).
-installThreeConsoleFilter();
-
-/** Fog/background — deep-blue dusk haze the city dissolves into. */
-const DUSK_FOG = "#101b30";
-/** Sky dome gradient stops (horizon reads slightly lighter than the fog). */
-const SKY_HORIZON = "#1a2a48";
-const SKY_ZENITH = "#04060c";
-/** Exponential fog density: ~17% haze at 200 units, ~70% at 500. */
-const FOG_DENSITY = 0.0022;
-
-/** Default overview — a fresh city always opens from this vantage. */
-const OVERVIEW_POSITION: [number, number, number] = [140, 155, 180];
-
-/** Key-light shadow frustum half-extent: root rect is 200×200 → ±100 + margin. */
-const SHADOW_EXTENT = 125;
-/** Above this building count the shadow map drops 2048 → 1024. */
-const SHADOW_MAP_LOD_THRESHOLD = 800;
-
-/** Camera limits — close enough to read windows, far enough for the skyline. */
-const MIN_DISTANCE = 18;
-const MAX_DISTANCE = 520;
-const MIN_POLAR = 0.1;
-const MAX_POLAR = 1.44; // ≈82.5° — never dips under the ground plane
-
-/** Fly-to tween duration (seconds) and easing power. */
-const FLY_DURATION = 0.8;
+import { Simulation } from "./Simulation";
+import { DioramaBase } from "./DioramaBase";
+import { Environment } from "./Environment";
+import {
+  DEFAULT_ORBIT,
+  ELEVATION_MAX,
+  ELEVATION_MIN,
+  SPAN_MAX,
+  SPAN_MIN,
+  clampedOrbit,
+  envParams,
+  layoutBounds,
+  orbitPosition,
+  orthoFrustum,
+  type EnvParams,
+  type OrbitState,
+} from "./orbitMath";
+import { SceneEnvContext } from "./sceneEnv";
 
 /**
- * Runtime-generated asphalt/grid texture for the ground plane. Seeded PRNG
- * (LCG) keeps the speckle deterministic — procedural detail must be stable
- * in shape for a given city, only clock-based motion may vary.
+ * Camera distance from the target — arbitrary for an ortho camera (zoom is
+ * the frustum span), but far enough that shadow-camera near/far and float
+ * precision stay comfortable.
  */
-function makeGroundTexture(): THREE.CanvasTexture | null {
-  const size = 512;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  if (ctx === null) return null;
+const ORBIT_DISTANCE = 200;
+/** Key-light shadow frustum half-extent: covers the ≈365×274 root rect
+ * (half-diagonal ≈229) plus the slab overhang margin. */
+const SHADOW_EXTENT = 260;
+/** Shadow map resolution — the diorama look wants crisp soft edges. */
+const SHADOW_MAP_SIZE = 2048;
 
-  ctx.fillStyle = "#14161c";
-  ctx.fillRect(0, 0, size, size);
+/** Focus/reset tween duration (seconds). */
+const FLY_DURATION = 0.8;
+/** Per-frame damping rate for user-driven motion (higher = snappier). */
+const DAMPING = 8;
+/** Wheel zoom speed: fractional span change per pixel of wheel delta. */
+const ZOOM_SPEED = 0.0016;
+/** Orbit speed: radians per pixel of drag. */
+const ORBIT_SPEED = 0.005;
+/** Pan target clamp — keeps the city in view at max zoom-out. */
+const PAN_LIMIT = 240;
 
-  let seed = 1337;
-  const rand = (): number => {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    return seed / 0xffffffff;
+/**
+ * The lighting rig's response to the scene environment. Key-light color and
+ * intensity, hemisphere colors, and ambient lift are all derived from the
+ * normalized {@link EnvParams} so the diorama stays readable at night and
+ * warms up at sunset.
+ */
+function lightingFor(env: EnvParams): {
+  key: { color: string; intensity: number };
+  hemi: { sky: string; ground: string; intensity: number };
+  ambient: number;
+} {
+  // Sunset warms the key toward gold; night cools it toward moonlight.
+  const keyColor = new THREE.Color("#fff3e0")
+    .lerp(new THREE.Color("#ffd9a0"), env.dusk * 0.8)
+    .lerp(new THREE.Color("#b9c8e8"), env.night * 0.85);
+  // Overcast/rain dims the key; night drops it hard (windows take over).
+  const keyIntensity =
+    2.1 * (1 - env.night * 0.82) * (1 - env.cloud * 0.35) * (1 - env.rain * 0.15);
+  // Sky/ground fill: warm cream ↔ cool slate, dimmed by overcast.
+  const skyColor = new THREE.Color("#fdf6ec")
+    .lerp(new THREE.Color("#cfd8e6"), env.night * 0.75)
+    .lerp(new THREE.Color("#c9cdd4"), env.cloud * 0.5);
+  const groundColor = new THREE.Color("#d8cbb4").lerp(
+    new THREE.Color("#5a6472"),
+    env.night * 0.7,
+  );
+  const hemiIntensity = 0.75 * (1 - env.cloud * 0.25);
+  // Night raises ambient so walls/windows stay readable under the dim key.
+  const ambient = 0.12 + env.night * 0.5 + env.cloud * 0.08;
+  return {
+    key: { color: `#${keyColor.getHexString()}`, intensity: keyIntensity },
+    hemi: {
+      sky: `#${skyColor.getHexString()}`,
+      ground: `#${groundColor.getHexString()}`,
+      intensity: hemiIntensity,
+    },
+    ambient,
   };
-
-  // Asphalt speckle — value noise at sub-pixel scale.
-  for (let i = 0; i < 2600; i++) {
-    const alpha = 0.015 + rand() * 0.04;
-    ctx.fillStyle = rand() > 0.5 ? `rgba(255,255,255,${alpha})` : `rgba(0,0,0,${alpha})`;
-    ctx.fillRect(rand() * size, rand() * size, 1 + rand() * 1.5, 1 + rand() * 1.5);
-  }
-  // City grid — faint minor lines, slightly stronger arterials.
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= size; i += 32) {
-    ctx.strokeStyle = i % 128 === 0 ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.022)";
-    ctx.beginPath();
-    ctx.moveTo(i + 0.5, 0);
-    ctx.lineTo(i + 0.5, size);
-    ctx.moveTo(0, i + 0.5);
-    ctx.lineTo(size, i + 0.5);
-    ctx.stroke();
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(48, 48); // one tile ≈ 42 world units, arterial ≈ 10.5
-  texture.anisotropy = 4;
-  return texture;
-}
-
-/** Gradient sky dome — backside sphere, fog-exempt, drawn behind everything. */
-function SkyDome() {
-  const material = useMemo(
-    () =>
-      new THREE.ShaderMaterial({
-        side: THREE.BackSide,
-        depthWrite: false,
-        fog: false,
-        uniforms: {
-          uHorizon: { value: new THREE.Color(SKY_HORIZON) },
-          uZenith: { value: new THREE.Color(SKY_ZENITH) },
-          uFog: { value: new THREE.Color(DUSK_FOG) },
-        },
-        vertexShader: /* glsl */ `
-          varying vec3 vDir;
-          void main() {
-            vDir = position;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-          }
-        `,
-        fragmentShader: /* glsl */ `
-          uniform vec3 uHorizon;
-          uniform vec3 uZenith;
-          uniform vec3 uFog;
-          varying vec3 vDir;
-          void main() {
-            vec3 d = normalize(vDir);
-            float t = pow(clamp(d.y, 0.0, 1.0), 0.55);
-            vec3 col = mix(uHorizon, uZenith, t);
-            // Warm dusk band hugging the horizon.
-            float band = pow(clamp(1.0 - abs(d.y - 0.05) * 5.0, 0.0, 1.0), 2.0);
-            col += vec3(0.15, 0.075, 0.03) * band;
-            // Below the horizon blend into the fog so the ground edge melts.
-            col = mix(col, uFog, smoothstep(0.03, -0.1, d.y));
-            gl_FragColor = vec4(col, 1.0);
-          }
-        `,
-      }),
-    [],
-  );
-  useEffect(() => () => material.dispose(), [material]);
-
-  return (
-    <mesh material={material} renderOrder={-1} frustumCulled={false}>
-      <sphereGeometry args={[1200, 32, 16]} />
-    </mesh>
-  );
 }
 
 /**
- * OrbitControls + store-driven fly-to. Lives inside the keyed city group so
- * a fresh analysis remounts it — and the mount effect resets the camera to
+ * Camera + controls + store-driven tweens. Lives inside the keyed city group
+ * so a fresh analysis remounts it — and the mount effect resets the orbit to
  * the default overview (the rig remembers nothing across cities).
  */
 function CameraRig({ buildings }: { buildings: Building[] }) {
-  const controlsRef = useRef<ComponentRef<typeof OrbitControls> | null>(null);
+  const gl = useThree((state) => state.gl);
+  const size = useThree((state) => state.size);
   const focusRequest = useCityStore((state) => state.focusRequest);
-  const camera = useThree((state) => state.camera);
+  const resetViewRequest = useCityStore((state) => state.resetViewRequest);
 
   const byId = useMemo(
     () => new Map(buildings.map((building) => [building.fileId, building])),
     [buildings],
   );
 
-  interface Tween {
-    t: number;
-    fromPos: THREE.Vector3;
-    toPos: THREE.Vector3;
-    fromTarget: THREE.Vector3;
-    toTarget: THREE.Vector3;
-  }
-  const tween = useRef<Tween | null>(null);
+  /** The authoritative orbit state — mutated in place, never re-rendered. */
+  const orbit = useRef<OrbitState>({
+    target: { ...DEFAULT_ORBIT.target },
+    span: DEFAULT_ORBIT.span,
+    azimuth: DEFAULT_ORBIT.azimuth,
+    elevation: DEFAULT_ORBIT.elevation,
+  });
+  /** Damped values chasing `orbit` — what the camera actually renders. */
+  const smooth = useRef<OrbitState>({
+    target: { ...DEFAULT_ORBIT.target },
+    span: DEFAULT_ORBIT.span,
+    azimuth: DEFAULT_ORBIT.azimuth,
+    elevation: DEFAULT_ORBIT.elevation,
+  });
+  /** Active store-driven tween, or null. */
+  const tween = useRef<{ t: number; from: OrbitState; to: OrbitState } | null>(
+    null,
+  );
+  /** Pointer-drag state (null = no relevant button held). */
+  const drag = useRef<{ mode: "pan" | "orbit"; lastX: number; lastY: number } | null>(
+    null,
+  );
 
-  // Fresh city → default overview (runs once per rig mount).
+  // prefers-reduced-motion: damping snaps immediately.
+  const reducedMotion = useRef(false);
   useEffect(() => {
-    camera.position.set(...OVERVIEW_POSITION);
-    const controls = controlsRef.current;
-    if (controls !== null) {
-      controls.target.set(0, 0, 0);
-      controls.update();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    reducedMotion.current = query.matches;
+    const onChange = (event: MediaQueryListEvent): void => {
+      reducedMotion.current = event.matches;
+    };
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
   }, []);
+
+  /**
+   * Apply an orbit state to the ortho camera (position + frustum). The
+   * camera comes from the frame callback's state (not a hook value) so the
+   * per-frame mutation is legal.
+   */
+  const applyOrbit = (camera: THREE.Camera, state: OrbitState): void => {
+    // Canvas is created with `orthographic` — the camera is always ortho.
+    const ortho = camera as THREE.OrthographicCamera;
+    const pos = orbitPosition(
+      state.target,
+      state.azimuth,
+      state.elevation,
+      ORBIT_DISTANCE,
+    );
+    camera.position.set(pos.x, pos.y, pos.z);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(state.target.x, state.target.y, state.target.z);
+    const frustum = orthoFrustum(state.span, size.width / size.height);
+    ortho.left = frustum.left;
+    ortho.right = frustum.right;
+    ortho.top = frustum.top;
+    ortho.bottom = frustum.bottom;
+    ortho.updateProjectionMatrix();
+  };
+
+  /** Start a tween from the current smoothed state toward `to`. */
+  const startTween = useCallback((to: OrbitState): void => {
+    const s = smooth.current;
+    tween.current = {
+      t: 0,
+      from: {
+        target: { ...s.target },
+        span: s.span,
+        azimuth: s.azimuth,
+        elevation: s.elevation,
+      },
+      to: {
+        target: { ...to.target },
+        span: to.span,
+        azimuth: to.azimuth,
+        elevation: to.elevation,
+      },
+    };
+  }, []);
+
+  // The first useFrame applies the default pose — no mount effect needed
+  // (smooth starts at DEFAULT_ORBIT, so frame 1 renders the overview).
 
   // A new focusRequest (nonce changes even for repeat clicks) starts a tween.
   useEffect(() => {
     if (focusRequest === null) return;
-    const controls = controlsRef.current;
     const building = byId.get(focusRequest.fileId);
-    if (controls === null || building === undefined) return;
+    if (building === undefined) return;
 
-    const toTarget = new THREE.Vector3(
-      building.x,
-      Math.min(building.h * 0.55, 24),
-      building.z,
+    // Keep the current viewing angles; pull to a reading span.
+    const span = THREE.MathUtils.clamp(
+      building.h * 1.5 + Math.max(building.w, building.d) * 3,
+      SPAN_MIN,
+      SPAN_MAX,
     );
-    // Keep the current viewing azimuth; pull to a reading distance.
-    const distance = THREE.MathUtils.clamp(
-      building.h * 1.6 + Math.max(building.w, building.d) * 3,
-      24,
-      90,
-    );
-    const direction = camera.position.clone().sub(controls.target).normalize();
-    const toPos = toTarget.clone().add(direction.multiplyScalar(distance));
-    toPos.y = Math.max(toPos.y, toTarget.y + distance * 0.45);
+    startTween({
+      target: { x: building.x, y: Math.min(building.h * 0.55, 24), z: building.z },
+      span,
+      azimuth: smooth.current.azimuth,
+      elevation: smooth.current.elevation,
+    });
+  }, [focusRequest, byId, startTween]);
 
-    tween.current = {
-      t: 0,
-      fromPos: camera.position.clone(),
-      toPos,
-      fromTarget: controls.target.clone(),
-      toTarget,
-    };
-  }, [focusRequest, byId, camera]);
-
-  // Any user gesture (drag/zoom/pan) cancels an in-flight tween immediately.
+  // resetViewRequest counter change → tween back to the default overview.
   useEffect(() => {
-    const controls = controlsRef.current;
-    if (controls === null) return;
-    const cancel = (): void => {
+    if (resetViewRequest === 0) return;
+    startTween({
+      target: { ...DEFAULT_ORBIT.target },
+      span: DEFAULT_ORBIT.span,
+      azimuth: DEFAULT_ORBIT.azimuth,
+      elevation: DEFAULT_ORBIT.elevation,
+    });
+  }, [resetViewRequest, startTween]);
+
+  // ---- Pointer controls on the canvas element ----
+  useEffect(() => {
+    const element = gl.domElement;
+    const cancelTween = (): void => {
       tween.current = null;
     };
-    controls.addEventListener("start", cancel);
-    return () => controls.removeEventListener("start", cancel);
-  }, []);
+    const onPointerDown = (event: PointerEvent): void => {
+      if (event.button === 0 && !event.ctrlKey) {
+        drag.current = { mode: "pan", lastX: event.clientX, lastY: event.clientY };
+      } else if (event.button === 2 || (event.button === 0 && event.ctrlKey)) {
+        drag.current = { mode: "orbit", lastX: event.clientX, lastY: event.clientY };
+      }
+    };
+    const onPointerMove = (event: PointerEvent): void => {
+      const state = drag.current;
+      if (state === null) return;
+      const dx = event.clientX - state.lastX;
+      const dy = event.clientY - state.lastY;
+      state.lastX = event.clientX;
+      state.lastY = event.clientY;
+      if (dx === 0 && dy === 0) return;
+      cancelTween();
+      const o = orbit.current;
+      if (state.mode === "pan") {
+        // Screen-space drag → ground-plane pan, rotated by the camera
+        // azimuth and scaled by span/viewport-height so the grab is 1:1
+        // (world units per screen pixel) at every zoom level.
+        const scale = o.span / size.height;
+        const sin = Math.sin(o.azimuth);
+        const cos = Math.cos(o.azimuth);
+        o.target.x -= (dx * cos + dy * sin) * scale;
+        o.target.z += (dx * sin - dy * cos) * scale;
+        o.target.y = 0;
+        o.target.x = THREE.MathUtils.clamp(o.target.x, -PAN_LIMIT, PAN_LIMIT);
+        o.target.z = THREE.MathUtils.clamp(o.target.z, -PAN_LIMIT, PAN_LIMIT);
+      } else {
+        o.azimuth -= dx * ORBIT_SPEED;
+        o.elevation = THREE.MathUtils.clamp(
+          o.elevation + dy * ORBIT_SPEED,
+          ELEVATION_MIN,
+          ELEVATION_MAX,
+        );
+      }
+    };
+    const onPointerUp = (): void => {
+      drag.current = null;
+    };
+    const onWheel = (event: WheelEvent): void => {
+      event.preventDefault();
+      cancelTween();
+      const clamped = clampedOrbit(
+        orbit.current.azimuth,
+        orbit.current.elevation,
+        orbit.current.span * (1 + event.deltaY * ZOOM_SPEED),
+      );
+      orbit.current.span = clamped.span;
+    };
+    const onContextMenu = (event: MouseEvent): void => {
+      event.preventDefault();
+    };
+    element.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    element.addEventListener("wheel", onWheel, { passive: false });
+    element.addEventListener("contextmenu", onContextMenu);
+    return () => {
+      element.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      element.removeEventListener("wheel", onWheel);
+      element.removeEventListener("contextmenu", onContextMenu);
+    };
+    // size feeds the 1:1 pan scale; re-bind when it changes.
+  }, [gl, size]);
 
-  useFrame((_, delta) => {
+  useFrame((frame, delta) => {
     const active = tween.current;
-    const controls = controlsRef.current;
-    if (active === null || controls === null) return;
-    active.t = Math.min(1, active.t + delta / FLY_DURATION);
-    const eased = 1 - Math.pow(1 - active.t, 3); // ease-out cubic
-    camera.position.lerpVectors(active.fromPos, active.toPos, eased);
-    controls.target.lerpVectors(active.fromTarget, active.toTarget, eased);
-    controls.update();
-    if (active.t >= 1) tween.current = null;
+    if (active !== null) {
+      active.t = Math.min(1, active.t + delta / FLY_DURATION);
+      const eased = 1 - Math.pow(1 - active.t, 3); // ease-out cubic
+      const o = orbit.current;
+      o.target.x = THREE.MathUtils.lerp(active.from.target.x, active.to.target.x, eased);
+      o.target.y = THREE.MathUtils.lerp(active.from.target.y, active.to.target.y, eased);
+      o.target.z = THREE.MathUtils.lerp(active.from.target.z, active.to.target.z, eased);
+      o.span = THREE.MathUtils.lerp(active.from.span, active.to.span, eased);
+      o.azimuth = THREE.MathUtils.lerp(active.from.azimuth, active.to.azimuth, eased);
+      o.elevation = THREE.MathUtils.lerp(
+        active.from.elevation,
+        active.to.elevation,
+        eased,
+      );
+      if (active.t >= 1) tween.current = null;
+    }
+
+    // Damped chase: `smooth` follows `orbit` with exponential smoothing;
+    // reduced motion snaps in a single frame.
+    const k = reducedMotion.current ? 1 : 1 - Math.exp(-DAMPING * delta);
+    const s = smooth.current;
+    const o = orbit.current;
+    s.target.x = THREE.MathUtils.lerp(s.target.x, o.target.x, k);
+    s.target.y = THREE.MathUtils.lerp(s.target.y, o.target.y, k);
+    s.target.z = THREE.MathUtils.lerp(s.target.z, o.target.z, k);
+    s.span = THREE.MathUtils.lerp(s.span, o.span, k);
+    s.azimuth = THREE.MathUtils.lerp(s.azimuth, o.azimuth, k);
+    s.elevation = THREE.MathUtils.lerp(s.elevation, o.elevation, k);
+    applyOrbit(frame.camera, s);
   });
 
+  return null;
+}
+
+/** Warm/cool hemisphere + ambient + warm key light, modulated by env params. */
+function Lighting({ env }: { env: EnvParams }) {
+  const lighting = useMemo(() => lightingFor(env), [env]);
   return (
-    <OrbitControls
-      ref={controlsRef}
-      makeDefault
-      enableDamping
-      dampingFactor={0.08}
-      minDistance={MIN_DISTANCE}
-      maxDistance={MAX_DISTANCE}
-      minPolarAngle={MIN_POLAR}
-      maxPolarAngle={MAX_POLAR}
-    />
+    <>
+      <hemisphereLight
+        args={[lighting.hemi.sky, lighting.hemi.ground, lighting.hemi.intensity]}
+      />
+      <ambientLight intensity={lighting.ambient} />
+      <directionalLight
+        position={[-60, 90, 40]}
+        intensity={lighting.key.intensity}
+        color={lighting.key.color}
+        castShadow
+        shadow-mapSize={[SHADOW_MAP_SIZE, SHADOW_MAP_SIZE]}
+        shadow-camera-left={-SHADOW_EXTENT}
+        shadow-camera-right={SHADOW_EXTENT}
+        shadow-camera-top={SHADOW_EXTENT}
+        shadow-camera-bottom={-SHADOW_EXTENT}
+        shadow-camera-near={20}
+        shadow-camera-far={700}
+        shadow-bias={-0.00035}
+        shadow-normalBias={0.5}
+      />
+    </>
   );
 }
 
@@ -285,90 +405,61 @@ export function CityScene({
   changeSet?: ChangeSet | null;
 }) {
   const select = useCityStore((state) => state.select);
+  const timeOfDay = useCityStore((state) => state.timeOfDay);
+  const weather = useCityStore((state) => state.weather);
+  const simEnabled = useCityStore((state) => state.simEnabled);
   const compareMap =
     changeSet === undefined || changeSet === null
       ? undefined
       : new Map(changeSet.changes.map((change) => [change.fileId, change]));
 
-  const groundTexture = useMemo(() => makeGroundTexture(), []);
-  useEffect(() => () => groundTexture?.dispose(), [groundTexture]);
-
-  const shadowMapSize =
-    layout.buildings.length > SHADOW_MAP_LOD_THRESHOLD ? 1024 : 2048;
+  const bounds = useMemo(() => layoutBounds(layout), [layout]);
+  const env = useMemo(() => envParams(timeOfDay, weather), [timeOfDay, weather]);
+  // Sim substrate (sidewalk graph + road polylines) — derived once per layout.
+  const network = useMemo(() => derivePathNetwork(layout), [layout]);
 
   return (
     <Canvas
+      orthographic
       shadows="percentage"
       dpr={[1, 2]}
-      gl={{ antialias: false, powerPreference: "high-performance" }}
-      camera={{ position: OVERVIEW_POSITION, fov: 50, near: 1, far: 3000 }}
+      gl={{ antialias: true, powerPreference: "high-performance" }}
+      camera={{ position: [0, 150, 180], near: 1, far: 3000, zoom: 1 }}
       onPointerMissed={() => select(null)}
     >
-      <color attach="background" args={[DUSK_FOG]} />
-      <fogExp2 attach="fog" args={[DUSK_FOG, FOG_DENSITY]} />
-      <SkyDome />
+      <color attach="background" args={[PAGE_COLORS.backdrop]} />
+      <SceneEnvContext.Provider value={env}>
+        <Lighting env={env} />
 
-      {/* Lighting rig: warm key with shadows, cool hemisphere fill, cold rim. */}
-      <hemisphereLight args={["#54627f", "#171a20", 0.55]} />
-      <directionalLight
-        position={[130, 190, 80]}
-        intensity={2.0}
-        color="#ffe7c4"
-        castShadow
-        shadow-mapSize={[shadowMapSize, shadowMapSize]}
-        shadow-camera-left={-SHADOW_EXTENT}
-        shadow-camera-right={SHADOW_EXTENT}
-        shadow-camera-top={SHADOW_EXTENT}
-        shadow-camera-bottom={-SHADOW_EXTENT}
-        shadow-camera-near={20}
-        shadow-camera-far={520}
-        shadow-bias={-0.00035}
-        shadow-normalBias={0.5}
-      />
-      <directionalLight position={[-140, 70, -110]} intensity={0.55} color="#7d9bff" />
-
-      {/* Ground of the world — procedural asphalt/grid, receives shadows. */}
-      <mesh rotation-x={-Math.PI / 2} receiveShadow>
-        <planeGeometry args={[2000, 2000]} />
-        <meshStandardMaterial
-          color={groundTexture !== null ? "#ffffff" : "#14161c"}
-          map={groundTexture ?? undefined}
-          roughness={0.96}
-          metalness={0}
-        />
-      </mesh>
-
-      {/*
-       * Keyed by repoPath + building count: analyzing a different folder (or
-       * the same folder after files were added/removed) remounts the whole
-       * city instead of patching instanced matrices in place. The CameraRig
-       * sits inside the key so a fresh city also resets the viewpoint.
-       */}
-      <group key={`${layout.repoPath}:${layout.buildings.length}`}>
-        <Districts districts={layout.districts} buildings={layout.buildings} />
-        <Roads roads={layout.roads} buildings={layout.buildings} changes={compareMap} />
-        <Buildings buildings={layout.buildings} changes={compareMap} />
-        {changeSet !== undefined && changeSet !== null && (
-          <ChangeOverlays layout={layout} changeSet={changeSet} />
-        )}
-        <CameraRig buildings={layout.buildings} />
-      </group>
-
-      {/*
-       * Post: bloom is deliberately faint — only emissive channels (selection
-       * glow, crane beacons, blast pulses) cross the threshold; the reserved
-       * zinc city itself never blooms. SMAA replaces the Canvas' MSAA.
-       */}
-      <EffectComposer multisampling={0}>
-        <Bloom
-          mipmapBlur
-          intensity={0.45}
-          luminanceThreshold={0.55}
-          luminanceSmoothing={0.25}
-        />
-        <Vignette offset={0.26} darkness={0.58} />
-        <SMAA />
-      </EffectComposer>
+        {/*
+         * Keyed by repoPath + city group: analyzing a different folder (or
+         * the same folder after files were added/removed) remounts the whole
+         * city instead of patching instanced matrices in place. The
+         * CameraRig sits inside the key so a fresh city also resets the
+         * viewpoint.
+         */}
+        <group key={`${layout.repoPath}:${layout.buildings.length}`}>
+          <Environment bounds={bounds} />
+          <DioramaBase bounds={bounds} />
+          <Districts districts={layout.districts} buildings={layout.buildings} />
+          <Roads roads={layout.roads} buildings={layout.buildings} changes={compareMap} />
+          <Buildings buildings={layout.buildings} changes={compareMap} envParams={env} />
+          <Simulation
+            network={network}
+            repoPath={layout.repoPath}
+            timeOfDay={timeOfDay}
+            weather={weather}
+            bounds={bounds}
+            districts={layout.districts}
+            buildings={layout.buildings}
+            simEnabled={simEnabled}
+          />
+          {changeSet !== undefined && changeSet !== null && (
+            <ChangeOverlays layout={layout} changeSet={changeSet} />
+          )}
+          <CameraRig buildings={layout.buildings} />
+        </group>
+      </SceneEnvContext.Provider>
     </Canvas>
   );
 }

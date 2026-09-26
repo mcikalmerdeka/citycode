@@ -1,29 +1,33 @@
 "use client";
 
 /**
- * ChangeOverlays — the Phase 4 compare-only ground/feature treatments that
- * have no counterpart in the static view. Everything here is a pure function
- * of { layout, changeSet } — the compare view must never shift the
- * underlying layout (PRD risk §11), only decorate it.
+ * ChangeOverlays — the compare-only ground/feature treatments that have no
+ * counterpart in the static view. Everything here is a pure function of
+ * { layout, changeSet } — the compare view must never shift the underlying
+ * layout (PRD risk §11), only decorate it.
  *
- * Phase 3D craft upgrade (metaphors unchanged, execution deepened):
+ * Small World diorama restyle (Unit B): mechanics unchanged, palette moved
+ * to the warm diorama tokens from COMPARE_ACCENTS / theme.ts —
  * - Construction cranes (modified): a proper tower crane — tapered mast with
  *   cross-brace hints, jib + counter-jib + counterweight, a trolley that
  *   slowly travels the jib with a hanging cable and hook, and an amber
  *   beacon that blinks on top. Per-crane phase (fileId hash) desynchronizes
  *   a skyline of cranes. Slow jib rotation kept from the original marker.
+ *   Crane structure is now warm construction-amber over dark timber steel.
  * - Fresh buildings (added): the rise-from-foundation animation lives in
  *   Buildings.tsx (it animates the actual instanced matrices); documented
  *   here so the split is discoverable.
  * - Rubble (deleted): a cluster of 4–7 tilted chunks per deleted file,
  *   deterministic via the same path-hash family as {@link slotFor} — the
- *   same commit always renders the same wreckage.
- * - Blast radius: importer recoloring stays in Buildings; each blast
- *   building additionally gets a slow ground shockwave ring (staggered
- *   phase, subtle).
- * - Moved (renamed): ALL renames now draw a cyan line (the old renderer
+ *   same commit always renders the same wreckage. Chunks are warm rubble
+ *   grey over a pale disturbed-earth scar (no near-black).
+ * - Blast radius: roof tinting stays in Buildings; each blast building
+ *   additionally gets a slow ground shockwave ring (staggered phase, subtle)
+ *   in the muted terracotta-red blast accent.
+ * - Moved (renamed): ALL renames draw a slate-blue line (the old renderer
  *   showed only the first), with a marching-ants dash flow toward the new
  *   location.
+ * - Foundation slabs: pale diorama cream (COMPARE_ACCENTS.foundation).
  * - prefers-reduced-motion freezes every loop here (static emphasis kept).
  */
 
@@ -35,8 +39,8 @@ import { Line } from "@react-three/drei";
 
 import type { CityLayout, District } from "@/lib/city/layout";
 import type { ChangeSet, NodeChange } from "@/lib/diff/apply";
+import { COMPARE_ACCENTS } from "@/lib/city/theme";
 import { parentDistrict } from "@/lib/diff/apply";
-import { STATUS_COLORS } from "./Buildings";
 
 /** Foundation slabs: taller than rubble but clearly not a building (Phase 5). */
 const FOUNDATION_W = 6;
@@ -45,10 +49,14 @@ const FOUNDATION_H = 0.9;
 /** Deterministic per-file offset inside the parent district (world units). */
 const RUBBLE_SLOT_GAP = 2.4;
 
-/** Crane palette — amber structure over dark steel (construction hues only). */
-const CRANE_STEEL = "#3f3a33";
-const CRANE_COUNTERWEIGHT = "#2e2a26";
-const CRANE_CABLE = "#26221f";
+/** Crane palette — warm construction amber over dark timber steel. */
+const CRANE_AMBER = COMPARE_ACCENTS.construction;
+const CRANE_STEEL = "#4A4038";
+const CRANE_COUNTERWEIGHT = "#3A332C";
+const CRANE_CABLE = "#332D27";
+/** Rubble: warm grey chunks over a pale disturbed-earth scar. */
+const RUBBLE_CHUNK = COMPARE_ACCENTS.rubble;
+const RUBBLE_SCAR = "#C9BFAE";
 
 /** Stable 32-bit path hash — the only "randomness" source for chunk scatter. */
 function hashOf(value: string): number {
@@ -154,7 +162,7 @@ function CraneMarker({
     }
   });
 
-  const amber = STATUS_COLORS.construction;
+  const amber = CRANE_AMBER;
   return (
     <group position={[x, top, z]}>
       {/* Concrete base */}
@@ -267,7 +275,7 @@ function BlastRing({
       <ringGeometry args={[0.85, 1, 40]} />
       <meshBasicMaterial
         ref={materialRef}
-        color={STATUS_COLORS.blast}
+        color={COMPARE_ACCENTS.blast}
         transparent
         opacity={0.5}
         depthWrite={false}
@@ -297,7 +305,7 @@ function MovedLine({
     <Line
       ref={lineRef}
       points={points}
-      color={STATUS_COLORS.moved}
+      color={COMPARE_ACCENTS.moved}
       lineWidth={3}
       dashed
       dashSize={1.4}
@@ -397,7 +405,7 @@ export function ChangeOverlays({ layout, changeSet }: { layout: CityLayout; chan
     () => ({
       geometry: new THREE.BoxGeometry(1, 1, 1),
       material: new THREE.MeshStandardMaterial({
-        color: STATUS_COLORS.rubble,
+        color: RUBBLE_CHUNK,
         roughness: 1,
         metalness: 0,
       }),
@@ -431,7 +439,7 @@ export function ChangeOverlays({ layout, changeSet }: { layout: CityLayout; chan
             {/* Ground scar under the wreckage so the plot reads as disturbed. */}
             <mesh position={[0, 0.05, 0]}>
               <boxGeometry args={[5.4, 0.1, 5.4]} />
-              <meshStandardMaterial color="#3b3733" roughness={1} metalness={0} />
+              <meshStandardMaterial color={RUBBLE_SCAR} roughness={1} metalness={0} />
             </mesh>
           </group>
         ),
@@ -441,7 +449,7 @@ export function ChangeOverlays({ layout, changeSet }: { layout: CityLayout; chan
         slab === null ? null : (
           <mesh key={`foundation:${slab.id}`} position={[slab.x, FOUNDATION_H / 2, slab.z]}>
             <boxGeometry args={[FOUNDATION_W, FOUNDATION_H, FOUNDATION_D]} />
-            <meshStandardMaterial color={STATUS_COLORS.foundation} roughness={1} metalness={0} />
+            <meshStandardMaterial color={COMPARE_ACCENTS.foundation} roughness={1} metalness={0} />
           </mesh>
         ),
       )}

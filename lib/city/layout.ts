@@ -127,14 +127,15 @@ export interface CityLayoutOptions {
   /**
    * Target area (world units²) of the root rectangle the whole city occupies.
    * The root rectangle is always centered at the world origin (0, 0).
-   * @default 40000 (200×200)
+   * @default 100000 (≈365×274 at the 4:3 root aspect)
    */
   totalArea?: number;
   /**
    * Padding between a district block's edge and its content (buildings /
    * nested districts), in world units. Scales per nesting depth so deeply
-   * nested blocks stay readable.
-   * @default 2
+   * nested blocks stay readable. Sets the STREET width between blocks: two
+   * adjacent depth-0 districts sit 2×padding apart.
+   * @default 4
    */
   districtPadding?: number;
   /**
@@ -191,13 +192,30 @@ interface PartitionItem {
 }
 
 /** Documented default for {@link CityLayoutOptions.totalArea}. */
-const DEFAULT_TOTAL_AREA = 40000;
+const DEFAULT_TOTAL_AREA = 100000;
 /** Documented default for {@link CityLayoutOptions.districtPadding}. */
-const DEFAULT_DISTRICT_PADDING = 2;
+const DEFAULT_DISTRICT_PADDING = 4;
 /** Documented default for {@link CityLayoutOptions.heightPerLoc}. */
 const DEFAULT_HEIGHT_PER_LOC = 0.1;
 /** Documented default for {@link CityLayoutOptions.minFootprint}. */
 const DEFAULT_MIN_FOOTPRINT = 1;
+
+/**
+ * Fraction of its treemap cell a building's footprint occupies. The cell is
+ * pure partition area (at 1.0 buildings would tile edge-to-edge, walls
+ * touching); shrinking to this fraction opens the yard gap between buildings
+ * INSIDE a block. Street width BETWEEN blocks is
+ * {@link CityLayoutOptions.districtPadding}.
+ */
+const FOOTPRINT_SCALE = 0.68;
+
+/**
+ * Hard cap on a building's footprint side (world units). Footprint area is
+ * LOC-proportional, so without a cap a very large file becomes a huge slab
+ * that dwarfs the street grid; capped, it grows UP instead — a slim tower
+ * whose height still carries the LOC signal (the reference app's downtown).
+ */
+const MAX_FOOTPRINT_SIDE = 16;
 
 /**
  * Weight floor for treemap participation. Reachable only when a caller
@@ -543,11 +561,19 @@ function squarify(
  * aspect formula (see header) clamped into the cell so a symbol-heavy file
  * can never poke out of its district block; height = LOC, floored at 0.5 so
  * 1-line files stay clickable.
+ *
+ * The footprint is shrunk by {@link FOOTPRINT_SCALE} before clamping: a raw
+ * treemap cell is pure partition, so at full size buildings tile their block
+ * edge-to-edge. The shrink carves the uniform yard gap between neighboring
+ * walls that the Small World diorama reads as streets and lawns.
  */
 function buildingFor(file: FileNode, cell: Rect, area: number, heightPerLoc: number): Building {
   const aspect = Math.sqrt(Math.max(1, file.functions.length));
-  let w = Math.sqrt(area * aspect);
-  let d = Math.sqrt(area / aspect);
+  let w = Math.sqrt(area * aspect) * FOOTPRINT_SCALE;
+  let d = Math.sqrt(area / aspect) * FOOTPRINT_SCALE;
+  // Large-file cap: excess footprint budget goes to height instead.
+  if (w > MAX_FOOTPRINT_SIDE) w = MAX_FOOTPRINT_SIDE;
+  if (d > MAX_FOOTPRINT_SIDE) d = MAX_FOOTPRINT_SIDE;
   if (w > cell.w) {
     w = cell.w;
     d = Math.min(area / w, cell.d);
