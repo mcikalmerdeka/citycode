@@ -18,7 +18,11 @@ export const PAGE_COLORS = {
   backdrop: "#e8e9e4",
 } as const;
 
-/** Ground-plane palette: lawns, plazas, sidewalks, roads. */
+/**
+ * Ground-plane palette: lawns, plazas, sidewalks, roads. The diorama's
+ * figure/ground comes from *value*, not hue: `asphalt` must stay far darker
+ * than `plaza`/`pavement`/`curb` or the road grid reads as a flat smear.
+ */
 export const GROUND_COLORS = {
   lawn: "#A9B797",
   lawnDeep: "#9DAD8C",
@@ -26,9 +30,19 @@ export const GROUND_COLORS = {
   plaza: "#D9D1C3",
   sidewalk: "#D7D1C6",
   curb: "#E6E1D8",
-  asphalt: "#77746F",
+  asphalt: "#4A4844",
   marking: "#ECE7DC",
   gravel: "#DDD4C2",
+  /** Raised sidewalk deck flanking the carriageway, one step below the kerb. */
+  pavement: "#CFC9BD",
+  /** Sunlit top face of the kerb; `curb` is the shaded body. */
+  kerbLight: "#EDE8DE",
+  /** Painted zebra stripes and stop bars. */
+  crosswalk: "#F2EEE6",
+  /** Accent stripe for the highlighted commute route. */
+  routeAccent: "#C98B4E",
+  /** Warm emissive tint of street-lamp pools at night. */
+  lampGlow: "#F2E2B8",
   /** Scene backdrop behind/under the diorama (matches PAGE_COLORS.backdrop). */
   backdrop: "#e8e9e4",
 } as const;
