@@ -1,7 +1,7 @@
 /**
- * Legend — a DOM overlay pinned top-left of the scene area, always visible
- * (it never toggles with showLabels). Pure presentational: no handlers, no
- * pointer events, so it can never steal an orbit click.
+ * Legend — a compact "City key" pill pinned bottom-left of the stage that
+ * expands the key panel above it on click. The panel itself has no pointer
+ * events, so it can never steal an orbit click.
  *
  * Restyled to the Small World pill chrome: a white rounded panel using the
  * Wave-0 tokens. Compare swatch colors come from
@@ -14,6 +14,10 @@
  * only the COMPARE_ROWS mapping below needs adjusting — the layout and
  * styling here are contract-independent.
  */
+
+"use client";
+
+import { useState } from "react";
 
 import { compareAccent } from "./compareAccent";
 import { useCityStore } from "@/lib/store";
@@ -44,13 +48,36 @@ function accentColor(compareMode: CompareMode, status: string): string {
 export function Legend() {
   const compareMode = useCityStore((state) => state.compareMode);
   const comparing = compareMode !== "static";
+  const [open, setOpen] = useState(false);
 
   return (
-    <div className="panel pointer-events-none absolute left-3 top-3 z-20 w-max rounded-2xl px-3.5 py-3">
-      <p className="eyebrow">
+    <div className="absolute bottom-3.5 left-3.5 z-20 flex flex-col items-start gap-2">
+      {open && (
+        <div className="panel pointer-events-none w-max px-3.5 py-3">
+          <LegendRows comparing={comparing} compareMode={compareMode} />
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="pill-button focus-ring inline-flex items-center gap-1.5 text-xs"
+      >
+        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+          <rect x="2" y="2.5" width="4" height="4" rx="1" />
+          <rect x="2" y="9.5" width="4" height="4" rx="1" />
+          <path d="M9 4.5h5M9 11.5h5" />
+        </svg>
         {comparing ? "Compare key" : "City key"}
-      </p>
-      <ul className="mt-2 space-y-2">
+      </button>
+    </div>
+  );
+}
+
+function LegendRows({ comparing, compareMode }: { comparing: boolean; compareMode: CompareMode }) {
+  return (
+    <>
+      <ul className="space-y-2">
         <li className="flex items-center gap-2.5">
           <span className={SWATCH_BOX} aria-hidden="true">
             <span className="h-4 w-1.5 rounded-[1px] bg-[#B8AFA2]" />
@@ -123,6 +150,6 @@ export function Legend() {
           color is reserved for compare mode
         </p>
       )}
-    </div>
+    </>
   );
 }

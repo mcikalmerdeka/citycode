@@ -101,15 +101,36 @@ function buildTree(files: readonly FileNode[]): TreeNode[] {
 export function FileTree({
   graph,
   changeSet,
+  onClose,
 }: {
   graph: CodeGraph;
   changeSet: ChangeSet | null;
+  /** When given, the panel header shows a close button. */
+  onClose?: () => void;
 }) {
   const selectedId = useCityStore((state) => state.selectedId);
   const select = useCityStore((state) => state.select);
   const requestFocus = useCityStore((state) => state.requestFocus);
+  const [query, setQuery] = useState("");
 
   const tree = useMemo(() => buildTree(graph.files), [graph.files]);
+
+  /** Search results: basename-prefix matches first, then path substrings. */
+  const matches = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (needle === "") return null;
+    const base = (id: string): string => (id.split("/").pop() ?? id).toLowerCase();
+    const prefix = graph.files.filter((file) => base(file.id).startsWith(needle));
+    const rest = graph.files.filter(
+      (file) => !base(file.id).startsWith(needle) && file.id.toLowerCase().includes(needle),
+    );
+    return [...prefix, ...rest];
+  }, [graph.files, query]);
+
+  const focusFile = (fileId: string): void => {
+    select(fileId);
+    requestFocus(fileId);
+  };
 
   const statuses = useMemo(
     () =>
@@ -227,24 +248,83 @@ export function FileTree({
 
   return (
     <>
-      {/* Panel header: what repo this tree belongs to */}
+      {/* Panel header: what repo this tree belongs to + file search */}
       <div className="border-b border-[var(--border)] p-3">
-        <div className="flex items-baseline justify-between gap-2">
-          <p className="eyebrow">
-            Workspace
-          </p>
-          <span className="font-mono text-[9px] text-[var(--ink-secondary)]">{graph.files.length} files</span>
+        <div className="flex items-center justify-between gap-2">
+          <p className="eyebrow">Workspace</p>
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono text-[9px] text-[var(--ink-secondary)]">{graph.files.length} files</span>
+            {onClose !== undefined && (
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Collapse file tree"
+                className="focus-ring rounded-md p-1 text-[var(--ink-secondary)] transition-colors hover:bg-[var(--paper)] hover:text-[var(--ink)]"
+              >
+                <svg viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                  <path d="M2 2l8 8M10 2l-8 8" />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
         <p className="mt-1 truncate font-mono text-[10px] text-[var(--ink-secondary)]" title={graph.repoPath}>
           {graph.repoPath}
         </p>
+        <form
+          className="relative mt-2.5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (matches !== null && matches.length > 0) focusFile(matches[0].id);
+          }}
+        >
+          <svg
+            viewBox="0 0 16 16"
+            className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ink-secondary)]"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            aria-hidden="true"
+          >
+            <circle cx="7" cy="7" r="4.5" />
+            <path d="M10.5 10.5 14 14" />
+          </svg>
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search files…"
+            aria-label="Search files"
+            className="focus-ring w-full rounded-md border border-[var(--border)] bg-[var(--paper)] py-1.5 pl-8 pr-2.5 text-xs text-[var(--ink)] placeholder:text-[var(--ink-secondary)] focus:border-[var(--ink-secondary)] focus:outline-none"
+          />
+        </form>
       </div>
-      {/* The tree itself */}
+      {/* The tree itself — or a flat result list while searching */}
       <div className="min-h-0 flex-1 overflow-y-auto px-1 py-2">
         {graph.files.length === 0 ? (
           <p className="px-2 text-[11px] leading-relaxed text-[var(--ink-secondary)]">no files parsed</p>
-        ) : (
+        ) : matches === null ? (
           <ul className="list-none">{renderRows(tree, 0)}</ul>
+        ) : matches.length === 0 ? (
+          <p className="px-2 text-[11px] text-[var(--ink-secondary)]">no matching files</p>
+        ) : (
+          <ul className="list-none">
+            {matches.map((file) => (
+              <li key={file.id}>
+                <button
+                  type="button"
+                  title={file.id}
+                  onClick={() => focusFile(file.id)}
+                  className={`focus-ring flex w-full min-w-0 flex-col rounded-lg px-2 py-1 text-left transition-colors ${
+                    selectedId === file.id ? "bg-[var(--paper)] ring-1 ring-[var(--border)]" : "hover:bg-[var(--paper)]"
+                  }`}
+                >
+                  <span className="truncate font-mono text-[11px] text-[var(--ink)]">{file.id.split("/").pop()}</span>
+                  <span className="truncate font-mono text-[9px] text-[var(--ink-secondary)]">{file.id}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </>

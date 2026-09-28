@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * The diorama's ground surface — a warm lawn plane sized to the city rect
+ * The diorama's ground surface — a pale concrete plane (Small World town
+ * paving) sized to the city rect
  * plus a margin, sitting at y=0 on top of the wooden slab stack
  * ({@link DioramaBase} renders the strata below).
  *
@@ -50,13 +51,13 @@ function makeLawnTexture(): THREE.CanvasTexture | null {
   // Grass speckle — faint warm-dark and light flecks at sub-pixel scale.
   for (let i = 0; i < 2400; i++) {
     const alpha = 0.015 + rand() * 0.045;
-    ctx.fillStyle = rand() > 0.5 ? `rgba(74,84,58,${alpha})` : `rgba(255,255,255,${alpha})`;
+    ctx.fillStyle = rand() > 0.5 ? `rgba(90,80,64,${alpha})` : `rgba(255,255,255,${alpha})`;
     ctx.fillRect(rand() * size, rand() * size, 1 + rand() * 2, 1 + rand() * 2);
   }
   // Soft mottled patches — large, very low alpha, uneven lawn tone.
   for (let i = 0; i < 14; i++) {
     const alpha = 0.02 + rand() * 0.03;
-    ctx.fillStyle = `rgba(96,104,72,${alpha})`;
+    ctx.fillStyle = `rgba(110,100,80,${alpha})`;
     ctx.beginPath();
     ctx.ellipse(
       rand() * size,
@@ -93,8 +94,8 @@ export function Environment({ bounds }: { bounds: LayoutBounds }) {
 
   // Wet ground darkens toward lawnDeep and gains a rain sheen.
   const color = useMemo(() => {
-    const c = new THREE.Color(GROUND_COLORS.lawn);
-    if (env.wet > 0) c.lerp(new THREE.Color(GROUND_COLORS.lawnDeep), env.wet * 0.6);
+    const c = new THREE.Color(GROUND_COLORS.concrete);
+    if (env.wet > 0) c.lerp(new THREE.Color(GROUND_COLORS.concreteDeep), env.wet * 0.6);
     return c;
   }, [env.wet]);
 

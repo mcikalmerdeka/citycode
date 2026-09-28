@@ -31,10 +31,10 @@ export function computeCityStats(layout: CityLayout): CityStats {
   };
 }
 
-/** One stat pill: bold value + gray label. */
-function StatPill({ value, label }: { value: number; label: string }) {
+/** One stat inside a grouped pill: bold value + gray label. */
+function Stat({ value, label }: { value: number; label: string }) {
   return (
-    <span className="stat-pill">
+    <span className="stat-item">
       <span className="stat-value">{value}</span>
       <span>{label}</span>
     </span>
@@ -45,10 +45,11 @@ export function StatsBar({ layout }: { layout: CityLayout }) {
   const stats = computeCityStats(layout);
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5" aria-label="City statistics">
-      <StatPill value={stats.files} label="files" />
-      <StatPill value={stats.districts} label="districts" />
-      <StatPill value={stats.streets} label="streets" />
+    <div className="stat-pill" aria-label="City statistics">
+      <Stat value={stats.files} label="files" />
+      <Stat value={stats.districts} label="districts" />
+      <Stat value={stats.streets} label="streets" />
+      <Stat value={stats.roads} label="imports" />
     </div>
   );
 }

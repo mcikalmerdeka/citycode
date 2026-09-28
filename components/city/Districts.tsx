@@ -234,7 +234,7 @@ export function Districts({
         const curbColor = curbColorFor(district.depth);
         const patchColor = isPlazaDistrict(district, totalHeight)
           ? GROUND_COLORS.plaza
-          : GROUND_COLORS.lawn;
+          : GROUND_COLORS.parkLawn;
         // Pull the rendered block back so street tarmac never covers it:
         // X sides share the per-axis pull, Z uses the top(-Z)/bottom(+Z) split
         // (lib/city/blockInsets.ts semantics). The box shifts toward the side

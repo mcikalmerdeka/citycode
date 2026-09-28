@@ -107,7 +107,17 @@ export function CompareBar({
   });
 
   return (
-    <div className="absolute left-1/2 top-3 z-20 w-[26rem] max-w-[calc(100%-7rem)] -translate-x-1/2">
+    <div className="flex w-[26rem] max-w-full flex-col gap-2">
+      {active && (
+        <div className="panel p-3">
+          {compareMode === "prev" ? <p className="eyebrow">HEAD vs. HEAD~1</p> : <p className="eyebrow">HEAD vs. working directory</p>}
+          <DiffSummary
+            mode={compareMode as ActiveCompareMode}
+            changeQuery={changeQuery}
+            summaryQuery={summaryQuery}
+          />
+        </div>
+      )}
       <div
         role="tablist"
         aria-label="Compare view mode"
@@ -124,24 +134,13 @@ export function CompareBar({
               aria-selected={compareMode === value}
               disabled={disabled}
               onClick={() => setCompareMode(value)}
-              className="focus-ring flex-1 rounded-full px-2 py-1 text-[11px] font-medium transition-colors text-[var(--ink-secondary)] hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-[var(--ink-secondary)] aria-selected:bg-[var(--accent)] aria-selected:text-[var(--accent-ink)]"
+              className="focus-ring flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors text-[var(--ink-secondary)] hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-[var(--ink-secondary)] aria-selected:bg-[var(--accent)] aria-selected:text-[var(--accent-ink)]"
             >
               {label}
             </button>
           );
         })}
       </div>
-
-      {active && (
-        <div className="panel mt-2 p-3">
-          {compareMode === "prev" ? <p className="eyebrow">HEAD vs. HEAD~1</p> : <p className="eyebrow">HEAD vs. working directory</p>}
-          <DiffSummary
-            mode={compareMode as ActiveCompareMode}
-            changeQuery={changeQuery}
-            summaryQuery={summaryQuery}
-          />
-        </div>
-      )}
     </div>
   );
 }

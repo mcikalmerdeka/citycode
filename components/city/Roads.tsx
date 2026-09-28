@@ -40,7 +40,13 @@ import { routeRoad } from "@/lib/city/layout";
 import type { StreetNetwork } from "@/lib/city/streets";
 import { GROUND_COLORS } from "@/lib/city/theme";
 
-const ROAD_COLOR = GROUND_COLORS.asphalt;
+const ROAD_COLOR = GROUND_COLORS.road;
+const CROSSWALK_COLOR = GROUND_COLORS.crosswalk;
+/** Zebra crossings: stripe length (along travel), stripe width, gap, setback. */
+const ZEBRA_LENGTH = 2.2;
+const ZEBRA_STRIPE = 0.55;
+const ZEBRA_GAP = 0.55;
+const ZEBRA_SETBACK = 0.9;
 const CURB_COLOR = GROUND_COLORS.curb;
 const MARKING_COLOR = GROUND_COLORS.marking;
 const ROUTE_COLOR = GROUND_COLORS.routeAccent;
@@ -188,6 +194,65 @@ function offsetPolyline(
   return out;
 }
 
+/** Append one flat axis-aligned quad (y-up) to a ribbon accumulator. */
+function appendQuad(
+  data: RibbonData,
+  minX: number,
+  maxX: number,
+  minZ: number,
+  maxZ: number,
+  y: number,
+): void {
+  const base = data.positions.length / 3;
+  data.positions.push(minX, y, minZ, maxX, y, minZ, minX, y, maxZ, maxX, y, maxZ);
+  data.normals.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
+  data.uvs.push(0, 0, 1, 0, 0, 1, 1, 1);
+  data.indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+}
+
+/**
+ * Zebra crossings on every arm of every intersection: stripes run along the
+ * travel direction and are laid across the full carriageway, set back just
+ * past the crossing box. An arm only gets a crossing when its corridor
+ * actually continues that way.
+ */
+function appendCrosswalks(streets: StreetNetwork, y: number, data: RibbonData): void {
+  const find = (axis: "x" | "z", center: number, along: number) =>
+    streets.corridors.find(
+      (c) => c.axis === axis && Math.abs(c.center - center) < 1e-3 && along >= c.from - 1e-3 && along <= c.to + 1e-3,
+    );
+  for (const node of streets.intersections) {
+    const ns = find("x", node.x, node.z); // runs along Z
+    const ew = find("z", node.z, node.x); // runs along X
+    if (ns === undefined || ew === undefined) continue;
+    const pitch = ZEBRA_STRIPE + ZEBRA_GAP;
+    // North/south arms: crossing spans X across the NS carriageway.
+    for (const dir of [-1, 1]) {
+      const start = node.z + dir * (ew.width / 2 + ZEBRA_SETBACK);
+      const end = start + dir * ZEBRA_LENGTH;
+      if (Math.min(start, end) < ns.from || Math.max(start, end) > ns.to) continue;
+      const count = Math.floor((ns.width - ZEBRA_GAP) / pitch);
+      const offset = node.x - (count * pitch - ZEBRA_GAP) / 2;
+      for (let i = 0; i < count; i++) {
+        const x0 = offset + i * pitch;
+        appendQuad(data, x0, x0 + ZEBRA_STRIPE, Math.min(start, end), Math.max(start, end), y);
+      }
+    }
+    // East/west arms: crossing spans Z across the EW carriageway.
+    for (const dir of [-1, 1]) {
+      const start = node.x + dir * (ns.width / 2 + ZEBRA_SETBACK);
+      const end = start + dir * ZEBRA_LENGTH;
+      if (Math.min(start, end) < ew.from || Math.max(start, end) > ew.to) continue;
+      const count = Math.floor((ew.width - ZEBRA_GAP) / pitch);
+      const offset = node.z - (count * pitch - ZEBRA_GAP) / 2;
+      for (let i = 0; i < count; i++) {
+        const z0 = offset + i * pitch;
+        appendQuad(data, Math.min(start, end), Math.max(start, end), z0, z0 + ZEBRA_STRIPE, y);
+      }
+    }
+  }
+}
+
 export function Roads({
   streets,
   roads,
@@ -199,7 +264,7 @@ export function Roads({
   roads: Road[];
   buildings: Building[];
 }) {
-  const { tarmacGeometry, curbGeometry, markingGeometry, accentGeometry } = useMemo(() => {
+  const { tarmacGeometry, curbGeometry, markingGeometry, accentGeometry, crosswalkGeometry } = useMemo(() => {
     const byId = new Map(buildings.map((building) => [building.fileId, building]));
     const tarmacData = emptyRibbon();
     const curbData = emptyRibbon();
@@ -283,11 +348,15 @@ export function Roads({
       appendRibbon(polyline, ROUTE_Y, corridor.width * 0.3, accentData);
     }
 
+    const crosswalkData = emptyRibbon();
+    appendCrosswalks(streets, MARKING_Y, crosswalkData);
+
     return {
       tarmacGeometry: buildGeometry(tarmacData),
       curbGeometry: buildGeometry(curbData),
       markingGeometry: buildGeometry(markingData),
       accentGeometry: buildGeometry(accentData),
+      crosswalkGeometry: buildGeometry(crosswalkData),
     };
   }, [streets, roads, buildings]);
 
@@ -297,8 +366,9 @@ export function Roads({
       curbGeometry?.dispose();
       markingGeometry?.dispose();
       accentGeometry?.dispose();
+      crosswalkGeometry?.dispose();
     },
-    [tarmacGeometry, curbGeometry, markingGeometry, accentGeometry],
+    [tarmacGeometry, curbGeometry, markingGeometry, accentGeometry, crosswalkGeometry],
   );
 
   // Static dashed center markings: uv.x is cumulative path length, so a
@@ -316,7 +386,7 @@ export function Roads({
            {
              float m = fract(vRoadUv.x / ${ (DASH_LENGTH + DASH_GAP).toFixed(1) });
              float dash = step(${(DASH_LENGTH / (DASH_LENGTH + DASH_GAP)).toFixed(3)}, m);
-             diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.25, 1.0 - dash);
+             if (dash < 0.5) discard;
            }`,
         );
     },
@@ -362,6 +432,19 @@ export function Roads({
             polygonOffsetFactor={-3}
             polygonOffsetUnits={-3}
             onBeforeCompile={injectMarkingDash}
+          />
+        </mesh>
+      )}
+      {crosswalkGeometry !== null && (
+        <mesh geometry={crosswalkGeometry} receiveShadow dispose={null}>
+          <meshStandardMaterial
+            color={CROSSWALK_COLOR}
+            roughness={0.85}
+            metalness={0}
+            side={THREE.DoubleSide}
+            polygonOffset
+            polygonOffsetFactor={-3}
+            polygonOffsetUnits={-3}
           />
         </mesh>
       )}

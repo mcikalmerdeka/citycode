@@ -45,6 +45,14 @@ export const GROUND_COLORS = {
   lampGlow: "#F2E2B8",
   /** Scene backdrop behind/under the diorama (matches PAGE_COLORS.backdrop). */
   backdrop: "#e8e9e4",
+  /** Reference-matched surfaces: pale concrete blocks, cool grey tarmac. */
+  concrete: "#D9D5CA",
+  concreteDeep: "#CCC7BA",
+  parkLawn: "#B9BC96",
+  road: "#5B5C5F",
+  roadEdge: "#6A6B6D",
+  /** Warm cream stage the diorama floats on. */
+  stage: "#EFEBE2",
 } as const;
 
 /**
@@ -68,6 +76,32 @@ export const BUILDING_COLORS = {
   roofOchre: "#C98B4E",
   roofSlate: "#6E7B8B",
   redbrick: "#A0522D",
+  /** Storybook facade mix from the reference: brick, salmon, butter, sage, slate-blue. */
+  facadeTones: [
+    "#EDE3CF", // cream
+    "#E9D9B4", // butter
+    "#B6523B", // red brick
+    "#D7876C", // salmon
+    "#C9D0C9", // pale grey-green
+    "#B9C4CE", // slate blue
+    "#E3C9A1", // sand
+    "#EFE9DD", // white
+  ] as const,
+  /** Pitched roof mix: terracotta red, orange, charcoal slate, green, navy. */
+  roofTones: [
+    "#C24A31",
+    "#D2652F",
+    "#4A4E56",
+    "#5E8F53",
+    "#3E4C66",
+  ] as const,
+  /** Apartment towers: light concrete walls with a grey flat roof cap. */
+  towerWall: "#D9DBDA",
+  towerRoof: "#8F9296",
+  solarPanel: "#27345A",
+  windowGlass: "#3C4A5E",
+  windowFrame: "#F4F1EA",
+  trim: "#F2EEE6",
 } as const;
 
 /** Tree palette: canopies + trunks. */
@@ -75,6 +109,8 @@ export const TREE_COLORS = {
   canopySage: "#8FA583",
   canopyAutumn: "#C98B4E",
   trunk: "#7A6A55",
+  /** Autumn canopy mix from the reference: orange dominant, gold, rust, olive. */
+  autumnTones: ["#E0892F", "#E7AE3C", "#C8642C", "#D99A36", "#A39A47"] as const,
 } as const;
 
 /**

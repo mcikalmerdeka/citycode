@@ -62,9 +62,9 @@ import { envParams } from "./orbitMath";
 /** Trees also sprinkle this far beyond the building rect (stays on the lawn). */
 const TREE_MARGIN = 12;
 /** Average tree density: one tree per this many square world units. */
-const TREE_AREA_PER_TREE = 90;
+const TREE_AREA_PER_TREE = 60;
 /** Hard cap so a huge city can't spawn an unreasonable forest. */
-const TREE_MAX = 400;
+const TREE_MAX = 600;
 /** Placement attempts per target tree before giving up on a slot. */
 const TREE_ATTEMPT_FACTOR = 10;
 /** Trees keep this much clearance from district edges / building walls. */
@@ -73,12 +73,14 @@ const TREE_BUILDING_SETBACK = 1.5;
 /** Trees keep this much clearance from road centerlines. */
 const TREE_ROAD_CLEARANCE = 4.5;
 /** Minimum spacing between two trees (world units). */
-const TREE_SPACING = 6;
+const TREE_SPACING = 4.5;
 /** Tree scale range. */
-const TREE_SCALE_MIN = 0.8;
-const TREE_SCALE_RANGE = 0.5;
-/** Share of canopies that get the autumn tone. */
-const TREE_AUTUMN_RATIO = 0.18;
+const TREE_SCALE_MIN = 0.75;
+const TREE_SCALE_RANGE = 0.55;
+/** Share of canopies in autumn tones (the reference town is mid-autumn). */
+const TREE_AUTUMN_RATIO = 0.8;
+/** Share of trees drawn as tall cone conifers instead of round canopies. */
+const TREE_CONIFER_RATIO = 0.28;
 
 /** Ped rig heights: capsule body center, sphere head center, walk-bob amplitude. */
 const PED_BODY_Y = 0.95;
@@ -100,6 +102,7 @@ interface TreePlacement {
   z: number;
   scale: number;
   autumn: boolean;
+  conifer: boolean;
 }
 
 /** Deterministic LCG rand — same construction as Environment's lawn speckle. */
@@ -235,6 +238,7 @@ function placeTrees(
       z,
       scale: TREE_SCALE_MIN + rand() * TREE_SCALE_RANGE,
       autumn: rand() < TREE_AUTUMN_RATIO,
+      conifer: rand() < TREE_CONIFER_RATIO,
     });
   }
   return placed;
@@ -308,18 +312,31 @@ export function Simulation({
   // Tree geometry is baked with its local Y offsets (trunk 0→2.6, canopy
   // centered at 3.35) so instance matrices can pivot sways at the base.
   const treeGeometry = useMemo(() => {
-    const trunk = new THREE.CylinderGeometry(0.35, 0.5, 2.6, 6);
-    trunk.translate(0, 1.3, 0);
-    const canopy = new THREE.SphereGeometry(1.7, 10, 8);
-    canopy.translate(0, 3.35, 0);
-    return { trunk, canopy };
+    const trunk = new THREE.CylinderGeometry(0.22, 0.34, 2.4, 6);
+    trunk.translate(0, 1.2, 0);
+    // Low-poly faceted blob — reads as a chunky model-railway tree.
+    const canopy = new THREE.IcosahedronGeometry(1.75, 1);
+    canopy.scale(1, 1.12, 1);
+    canopy.translate(0, 3.5, 0);
+    const conifer = new THREE.ConeGeometry(1.35, 4.8, 7);
+    conifer.translate(0, 1.6 + 2.4, 0);
+    return { trunk, canopy, conifer };
   }, []);
   useEffect(
     () => () => {
       treeGeometry.trunk.dispose();
       treeGeometry.canopy.dispose();
+      treeGeometry.conifer.dispose();
     },
     [treeGeometry],
+  );
+
+  const treeSets = useMemo(
+    () => ({
+      round: trees.filter((tree) => !tree.conifer),
+      conifer: trees.filter((tree) => tree.conifer),
+    }),
+    [trees],
   );
 
   // Env uniform target — eased per fixed step inside the accumulator.
@@ -341,6 +358,7 @@ export function Simulation({
   const vehCabinRef = useRef<THREE.InstancedMesh>(null);
   const trunkRef = useRef<THREE.InstancedMesh>(null);
   const canopyRef = useRef<THREE.InstancedMesh>(null);
+  const coniferRef = useRef<THREE.InstancedMesh>(null);
   const accumulator = useRef(0);
   /** Last heading per ped (radians) — persists while dwelling. Ref, not
    * state: the useFrame hot path mutates it, React never reads it. */
@@ -390,37 +408,44 @@ export function Simulation({
     }
   }, [sim]);
 
-  // Tree canopy tones: mostly sage, some autumn, slight per-tree value jitter.
+  // Canopy tones: mostly autumn orange/gold/rust, some sage, value jitter.
   useLayoutEffect(() => {
-    const canopies = canopyRef.current;
-    if (canopies === null) return;
     const rand = lcg(0xcafe5eed);
     const color = new THREE.Color();
-    for (let i = 0; i < trees.length; i++) {
-      color.set(trees[i].autumn ? TREE_COLORS.canopyAutumn : TREE_COLORS.canopySage);
-      color.multiplyScalar(0.92 + rand() * 0.16);
-      canopies.setColorAt(i, color);
-    }
-    if (canopies.instanceColor !== null) canopies.instanceColor.needsUpdate = true;
-  }, [trees]);
+    const paint = (mesh: THREE.InstancedMesh | null, list: TreePlacement[]): void => {
+      if (mesh === null) return;
+      for (let i = 0; i < list.length; i++) {
+        const tones = TREE_COLORS.autumnTones;
+        color.set(
+          list[i].autumn ? tones[Math.floor(rand() * tones.length)] : TREE_COLORS.canopySage,
+        );
+        color.multiplyScalar(0.92 + rand() * 0.14);
+        mesh.setColorAt(i, color);
+      }
+      if (mesh.instanceColor !== null) mesh.instanceColor.needsUpdate = true;
+    };
+    paint(canopyRef.current, treeSets.round);
+    paint(coniferRef.current, treeSets.conifer);
+  }, [treeSets]);
 
   // Base instance matrices (trunks static, canopies straight) before any sway.
   useLayoutEffect(() => {
-    const trunks = trunkRef.current;
-    const canopies = canopyRef.current;
-    if (trunks === null || canopies === null) return;
     const { matrix, pos, quat, treeScale } = scratch;
     quat.identity();
-    for (let i = 0; i < trees.length; i++) {
-      pos.set(trees[i].x, 0, trees[i].z);
-      treeScale.setScalar(trees[i].scale);
-      matrix.compose(pos, quat, treeScale);
-      trunks.setMatrixAt(i, matrix);
-      canopies.setMatrixAt(i, matrix);
-    }
-    trunks.instanceMatrix.needsUpdate = true;
-    canopies.instanceMatrix.needsUpdate = true;
-  }, [trees, scratch]);
+    const place = (mesh: THREE.InstancedMesh | null, list: TreePlacement[]): void => {
+      if (mesh === null) return;
+      for (let i = 0; i < list.length; i++) {
+        pos.set(list[i].x, 0, list[i].z);
+        treeScale.setScalar(list[i].scale);
+        matrix.compose(pos, quat, treeScale);
+        mesh.setMatrixAt(i, matrix);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+    };
+    place(trunkRef.current, trees);
+    place(canopyRef.current, treeSets.round);
+    place(coniferRef.current, treeSets.conifer);
+  }, [trees, treeSets, scratch]);
 
   useFrame((_, rawDelta) => {
     if (!simEnabled) {
@@ -506,19 +531,22 @@ export function Simulation({
     }
 
     // --- Tree sway: canopy tilts pivot at the trunk base (baked geometry). ---
-    const canopies = canopyRef.current;
-    if (canopies !== null && envUniforms.wind > 0.005) {
-      for (let i = 0; i < trees.length; i++) {
-        const sway =
-          Math.sin(sim.time * 1.3 + i * 1.7) * envUniforms.wind * TREE_SWAY;
-        euler.set(sway, 0, sway * 0.7);
-        quat.setFromEuler(euler);
-        pos.set(trees[i].x, 0, trees[i].z);
-        treeScale.setScalar(trees[i].scale);
-        matrix.compose(pos, quat, treeScale);
-        canopies.setMatrixAt(i, matrix);
-      }
-      canopies.instanceMatrix.needsUpdate = true;
+    if (envUniforms.wind > 0.005) {
+      const sway = (mesh: THREE.InstancedMesh | null, list: TreePlacement[]): void => {
+        if (mesh === null) return;
+        for (let i = 0; i < list.length; i++) {
+          const tilt = Math.sin(sim.time * 1.3 + i * 1.7) * envUniforms.wind * TREE_SWAY;
+          euler.set(tilt, 0, tilt * 0.7);
+          quat.setFromEuler(euler);
+          pos.set(list[i].x, 0, list[i].z);
+          treeScale.setScalar(list[i].scale);
+          matrix.compose(pos, quat, treeScale);
+          mesh.setMatrixAt(i, matrix);
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+      };
+      sway(canopyRef.current, treeSets.round);
+      sway(coniferRef.current, treeSets.conifer);
     }
   });
 
@@ -578,15 +606,28 @@ export function Simulation({
           >
             <meshStandardMaterial color={TREE_COLORS.trunk} roughness={0.9} metalness={0} />
           </instancedMesh>
-          <instancedMesh
-            ref={canopyRef}
-            args={[undefined, undefined, trees.length]}
-            geometry={treeGeometry.canopy}
-            castShadow
-            frustumCulled={false}
-          >
-            <meshStandardMaterial roughness={0.85} metalness={0} />
-          </instancedMesh>
+          {treeSets.round.length > 0 && (
+            <instancedMesh
+              ref={canopyRef}
+              args={[undefined, undefined, treeSets.round.length]}
+              geometry={treeGeometry.canopy}
+              castShadow
+              frustumCulled={false}
+            >
+              <meshStandardMaterial roughness={0.85} metalness={0} flatShading />
+            </instancedMesh>
+          )}
+          {treeSets.conifer.length > 0 && (
+            <instancedMesh
+              ref={coniferRef}
+              args={[undefined, undefined, treeSets.conifer.length]}
+              geometry={treeGeometry.conifer}
+              castShadow
+              frustumCulled={false}
+            >
+              <meshStandardMaterial roughness={0.85} metalness={0} flatShading />
+            </instancedMesh>
+          )}
         </>
       )}
     </group>

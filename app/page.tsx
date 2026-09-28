@@ -1,23 +1,24 @@
 "use client";
 
 /**
- * CityCode home — the Small World composition: a full-bleed 3D city canvas
- * with floating white chrome over it.
+ * CityCode home — the Small World composition: a slim page header over a
+ * rounded cream "stage" card that holds the full-bleed 3D city and all of
+ * its floating chrome.
  *
- * Layout (all chrome floats over the canvas, nothing is a fixed sidebar):
- * - top-left:    header (title + tagline) and the stats pill cluster
- * - top-right:   ViewControls (reset view / day phase / weather) + Labels
- *                and Repo Guidance pills
- * - top-center:  CompareBar (mode tabs + change summary)
- * - left edge:   collapsible Import panel (ImportForm + warnings)
- * - right edge:  collapsible FileTree drawer (slide-over)
- * - bottom-left: Legend
- * - bottom-center: dock of suggestion chips wired to real actions
- * - center:      compact inspector card when a building is selected
+ * Layout:
+ * - header:        title + tagline (left), Repo Guidance (right)
+ * - stage top-left:   stats pill
+ * - stage top-right:  Reset view + World settings popover (time, weather, labels)
+ * - stage left edge:  collapsible Import panel (ImportForm + warnings)
+ * - stage right edge: collapsible FileTree drawer (with file search)
+ * - stage bottom-left:   collapsible City key
+ * - stage bottom-center: compare mode tabs (+ summary) and quick-jump chips
+ *
+ * Each action lives in exactly one place — no duplicate buttons.
+ * - stage center:        compact inspector card when a building is selected
  *
  * The scene is loaded via next/dynamic with ssr:false (WebGL is
- * client-only), which is legal here because this module is a client
- * component. A fresh analysis result always clears the selection so the
+ * client-only). A fresh analysis result always clears the selection so the
  * inspect panel can never show a file from a previous city.
  */
 
@@ -39,45 +40,75 @@ const CityScene = dynamic(
   { ssr: false },
 );
 
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <path d="M2 2l8 8M10 2l-8 8" />
+    </svg>
+  );
+}
+
 function EmptyState() {
   return (
-    <div className="pointer-events-none flex h-full flex-col items-center justify-center gap-7 px-8 text-center">
-      {/* Mini skyline on a district block — the metaphor, in miniature */}
+    <div className="pointer-events-none flex h-full flex-col items-center justify-center gap-8 px-8 text-center">
+      {/* A tiny storybook block — the metaphor, in miniature. */}
       <div aria-hidden="true" className="flex flex-col items-center">
         <div className="flex items-end gap-1.5">
-          <span className="h-6 w-3 rounded-[1px] bg-[#B8AFA2]/60" />
-          <span className="h-10 w-4 rounded-[1px] bg-[#B8AFA2]" />
-          <span className="h-4 w-2.5 rounded-[1px] bg-[#B8AFA2]/40" />
-          <span className="h-14 w-5 rounded-[1px] bg-[#B8AFA2]" />
-          <span className="h-8 w-3 rounded-[1px] bg-[#B8AFA2]/70" />
-          <span className="h-5 w-2 rounded-[1px] bg-[#B8AFA2]/50" />
+          <House wall="#EDE3CF" roof="#C24A31" h={28} w={22} />
+          <House wall="#B6523B" roof="#4A4E56" h={40} w={26} />
+          <span className="h-9 w-3.5 rounded-full bg-[#E0892F]" />
+          <House wall="#D9DBDA" roof="#8F9296" h={58} w={24} flat />
+          <House wall="#E9D9B4" roof="#5E8F53" h={32} w={24} />
+          <span className="h-7 w-3 rounded-full bg-[#E7AE3C]" />
         </div>
-        <div className="mt-1 h-1.5 w-[130%] rounded-[1px] border border-[var(--border)] bg-[#D0D3C3]" />
+        <div className="h-2 w-64 rounded-[2px] bg-[#D9D5CA]" />
+        <div className="h-3 w-64 rounded-b-[3px] bg-[repeating-linear-gradient(180deg,#D8C29C_0_3px,#C4A87C_3px_4px)]" />
       </div>
       <div className="max-w-sm space-y-3">
         <h2 className="text-xl font-semibold tracking-tight text-[var(--ink)]">
-          See your codebase as a city
+          See your codebase as a little town
         </h2>
         <p className="text-sm leading-relaxed text-[var(--ink-secondary)]">
           Every file becomes a building — its height is lines of code, its
-          footprint the number of functions. Folders frame their files as city
-          blocks, and imports run between buildings as roads.
+          footprint the number of functions. Folders become city blocks, and
+          imports run between buildings as routes.
         </p>
         <p className="text-xs leading-relaxed text-[var(--ink-secondary)] opacity-70">
-          Use the Import panel on the left to build your first city.
+          Use the Import panel on the left to build your first town.
         </p>
       </div>
     </div>
   );
 }
 
+function House({ wall, roof, h, w, flat = false }: { wall: string; roof: string; h: number; w: number; flat?: boolean }) {
+  return (
+    <span className="flex flex-col items-center">
+      {flat ? (
+        <span className="h-1.5 rounded-[1px]" style={{ width: w + 2, background: roof }} />
+      ) : (
+        <span
+          style={{
+            width: 0,
+            height: 0,
+            borderLeft: `${w / 2 + 3}px solid transparent`,
+            borderRight: `${w / 2 + 3}px solid transparent`,
+            borderBottom: `${w * 0.55}px solid ${roof}`,
+          }}
+        />
+      )}
+      <span
+        className="bg-[repeating-linear-gradient(90deg,transparent_0_4px,rgba(60,74,94,0.55)_4px_7px)] bg-[length:100%_40%] bg-center bg-no-repeat"
+        style={{ width: w, height: h, backgroundColor: wall }}
+      />
+    </span>
+  );
+}
+
 export default function Home() {
   const [result, setResult] = useState<AnalyzeResponse | null>(null);
   const select = useCityStore((state) => state.select);
-  const showLabels = useCityStore((state) => state.showLabels);
-  const toggleLabels = useCityStore((state) => state.toggleLabels);
   const compareMode = useCityStore((state) => state.compareMode);
-  const setCompareMode = useCityStore((state) => state.setCompareMode);
   const requestFocus = useCityStore((state) => state.requestFocus);
   const selectedId = useCityStore((state) => state.selectedId);
   const [guidanceOpen, setGuidanceOpen] = useState(false);
@@ -133,203 +164,171 @@ export default function Home() {
   const hasResult = result !== null;
 
   return (
-    <div className="relative h-dvh overflow-hidden bg-[var(--paper)] font-sans text-[var(--ink)]">
-      {/* Full-bleed 3D canvas */}
-      <main className="absolute inset-0">
-        {hasResult ? (
-          <CityScene
-            layout={result.layout}
-            changeSet={compareMode === "static" ? null : (result.changeSet ?? null)}
-          />
-        ) : (
-          <EmptyState />
-        )}
-      </main>
-
-      {/* ---- Floating chrome ---- */}
-
-      {/* Top-left: header + stats */}
-      <header className="absolute left-4 top-4 z-20 flex max-w-[calc(100%-24rem)] flex-col gap-2.5">
+    <div className="flex h-dvh flex-col overflow-hidden bg-[var(--paper)] font-sans text-[var(--ink)]">
+      {/* ---- Page header ---- */}
+      <header className="flex h-14 shrink-0 items-center justify-between px-5">
         <div className="flex items-baseline gap-2.5">
-          <h1 className="text-base font-bold tracking-tight text-[var(--ink)]">CityCode</h1>
-          <p className="text-xs text-[var(--ink-secondary)]">Your codebase as a living city.</p>
+          <h1 className="text-[15px] font-semibold tracking-tight text-[var(--ink)]">CityCode</h1>
+          <p className="text-[13px] text-[var(--ink-secondary)]">
+            Your codebase as a living town. Change one file, watch everything react.
+          </p>
         </div>
-        {hasResult && <StatsBar layout={result.layout} />}
-      </header>
-
-      {/* Top-right: view controls + labels/guidance */}
-      <div className="absolute right-4 top-4 z-20 flex flex-col items-end gap-2">
-        <ViewControls />
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={toggleLabels}
-            aria-pressed={showLabels}
-            className="pill-button focus-ring text-xs"
-          >
-            Labels
-          </button>
+        <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={() => setGuidanceOpen(true)}
             aria-haspopup="dialog"
-            className="pill-button focus-ring text-xs"
+            disabled={!hasResult}
+            className="ghost-button focus-ring disabled:cursor-not-allowed disabled:opacity-40"
           >
+            <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+              <circle cx="8" cy="8" r="6.2" />
+              <path d="M6.3 6.2a1.8 1.8 0 1 1 2.5 1.7c-.5.2-.8.6-.8 1.1v.4" />
+              <circle cx="8" cy="11.6" r=".5" fill="currentColor" />
+            </svg>
             Repo Guidance
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Top-center: compare tabs + summary */}
-      {hasResult && (
-        <CompareBar
-          repoKey={result.repoKey}
-          isGitRepo={result.graph.headSha !== undefined}
-          onCompareResult={handleCompareResult}
-        />
-      )}
+      {/* ---- Stage: the cream card holding the city + floating chrome ---- */}
+      <div className="stage relative mx-4 mb-4 min-h-0 flex-1 overflow-hidden">
+        <main className="absolute inset-0">
+          {hasResult ? (
+            <CityScene
+              layout={result.layout}
+              changeSet={compareMode === "static" ? null : (result.changeSet ?? null)}
+            />
+          ) : (
+            <EmptyState />
+          )}
+        </main>
 
-      {/* Left edge: collapsible import panel */}
-      <div className="absolute left-4 top-1/2 z-20 -translate-y-1/2">
-        {importOpen ? (
-          <section
-            aria-label="Import a repository"
-            className="panel w-72 max-h-[70vh] overflow-y-auto p-4"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <p className="eyebrow">Import</p>
-              <button
-                type="button"
-                onClick={() => setImportOpen(false)}
-                aria-label="Collapse import panel"
-                className="focus-ring rounded-full p-1 text-[var(--ink-secondary)] transition-colors hover:bg-[var(--paper)] hover:text-[var(--ink)]"
-              >
-                <svg viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-                  <path d="M2 2l8 8M10 2l-8 8" />
-                </svg>
-              </button>
-            </div>
-            <ImportForm onSuccess={handleSuccess} />
-            {hasResult && result.warnings.length > 0 && (
-              <div className="mt-4">
-                <p className="eyebrow">Warnings ({result.warnings.length})</p>
-                <ul className="mt-1.5 max-h-36 space-y-1 overflow-y-auto pr-1">
-                  {result.warnings.map((warning) => (
-                    <li
-                      key={`${warning.path}:${warning.message}`}
-                      className="text-[11px] leading-snug text-[var(--ink-secondary)]"
-                    >
-                      <span className="font-mono text-[var(--ink)]">{warning.path}</span>{" "}
-                      — {warning.message}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </section>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setImportOpen(true)}
-            aria-expanded={false}
-            aria-label="Open import panel"
-            className="pill-button focus-ring text-xs"
-          >
-            Import
-          </button>
+        {/* Top-left: stats */}
+        {hasResult && (
+          <div className="absolute left-3.5 top-3.5 z-20 max-w-[calc(100%-30rem)]">
+            <StatsBar layout={result.layout} />
+          </div>
         )}
-      </div>
 
-      {/* Right edge: FileTree slide-over drawer */}
-      {hasResult && (
-        <div className="absolute right-4 top-1/2 z-20 -translate-y-1/2">
-          {treeOpen ? (
-            <section
-              aria-label="Working directory"
-              className="panel flex max-h-[70vh] w-72 flex-col overflow-hidden"
-            >
-              <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-3 py-2">
-                <p className="eyebrow">Workspace</p>
+        {/* Top-right: view controls */}
+        <div className="absolute right-3.5 top-3.5 z-20">
+          <ViewControls />
+        </div>
+
+        {/* Left edge: collapsible import panel */}
+        <div className="absolute left-3.5 top-1/2 z-20 -translate-y-1/2">
+          {importOpen ? (
+            <section aria-label="Import a repository" className="panel max-h-[62vh] w-72 overflow-y-auto p-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="eyebrow">Import</p>
                 <button
                   type="button"
-                  onClick={() => setTreeOpen(false)}
-                  aria-label="Collapse file tree"
-                  className="focus-ring rounded-full p-1 text-[var(--ink-secondary)] transition-colors hover:bg-[var(--paper)] hover:text-[var(--ink)]"
+                  onClick={() => setImportOpen(false)}
+                  aria-label="Collapse import panel"
+                  className="focus-ring rounded-md p-1 text-[var(--ink-secondary)] transition-colors hover:bg-[var(--paper)] hover:text-[var(--ink)]"
                 >
-                  <svg viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-                    <path d="M2 2l8 8M10 2l-8 8" />
-                  </svg>
+                  <CloseIcon />
                 </button>
               </div>
-              <FileTree
-                graph={result.graph}
-                changeSet={compareMode === "static" ? null : (result.changeSet ?? null)}
-              />
+              <ImportForm onSuccess={handleSuccess} />
+              {hasResult && result.warnings.length > 0 && (
+                <div className="mt-4">
+                  <p className="eyebrow">Warnings ({result.warnings.length})</p>
+                  <ul className="mt-1.5 max-h-36 space-y-1 overflow-y-auto pr-1">
+                    {result.warnings.map((warning) => (
+                      <li
+                        key={`${warning.path}:${warning.message}`}
+                        className="text-[11px] leading-snug text-[var(--ink-secondary)]"
+                      >
+                        <span className="font-mono text-[var(--ink)]">{warning.path}</span> — {warning.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </section>
           ) : (
             <button
               type="button"
-              onClick={() => setTreeOpen(true)}
+              onClick={() => setImportOpen(true)}
               aria-expanded={false}
-              aria-label="Open file tree"
+              aria-label="Open import panel"
               className="pill-button focus-ring text-xs"
             >
-              Files
+              Import
             </button>
           )}
         </div>
-      )}
 
-      {/* Bottom-left: legend */}
-      {hasResult && <Legend />}
-
-      {/* Center: compact inspector card for the selected building */}
-      {hasResult && selectedId !== null && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-          <div className="panel pointer-events-auto max-h-[60vh] w-80 overflow-y-auto rounded-2xl">
-            <InspectPanel graph={result.graph} repoKey={result.repoKey} />
+        {/* Right edge: FileTree drawer */}
+        {hasResult && (
+          <div className="absolute right-3.5 top-1/2 z-20 -translate-y-1/2">
+            {treeOpen ? (
+              <section aria-label="Working directory" className="panel flex max-h-[62vh] w-72 flex-col overflow-hidden">
+                <FileTree
+                  graph={result.graph}
+                  changeSet={compareMode === "static" ? null : (result.changeSet ?? null)}
+                  onClose={() => setTreeOpen(false)}
+                />
+              </section>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setTreeOpen(true)}
+                aria-expanded={false}
+                aria-label="Open file tree"
+                className="pill-button focus-ring text-xs"
+              >
+                Files
+              </button>
+            )}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Bottom-center: suggestion chips wired to real actions */}
-      <nav aria-label="Quick actions" className="dock">
-        <button
-          type="button"
-          onClick={() => setImportOpen(true)}
-          className="chip focus-ring"
-        >
-          Import a repo
-        </button>
-        <button
-          type="button"
-          disabled={largestFileId === null}
-          onClick={() => focusFile(largestFileId)}
-          title={largestFileId ?? "Import a repo first"}
-          className="chip focus-ring"
-        >
-          Largest files
-        </button>
-        <button
-          type="button"
-          disabled={mostImportedFileId === null}
-          onClick={() => focusFile(mostImportedFileId)}
-          title={mostImportedFileId ?? "Import a repo first"}
-          className="chip focus-ring"
-        >
-          Most imported
-        </button>
-        <button
-          type="button"
-          disabled={!hasResult || result.graph.headSha === undefined}
-          onClick={() => setCompareMode(compareMode === "prev" ? "static" : "prev")}
-          aria-pressed={compareMode === "prev"}
-          title="Compare against the previous commit"
-          className="chip focus-ring"
-        >
-          Previous commit
-        </button>
-      </nav>
+        {/* Bottom-left: legend */}
+        {hasResult && <Legend />}
+
+        {/* Center: compact inspector card for the selected building */}
+        {hasResult && selectedId !== null && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+            <div className="panel pointer-events-auto max-h-[60vh] w-80 overflow-y-auto">
+              <InspectPanel graph={result.graph} repoKey={result.repoKey} />
+            </div>
+          </div>
+        )}
+
+        {/* Bottom-center dock: compare mode tabs (+ summary) and quick jumps */}
+        {hasResult && (
+          <nav aria-label="Compare and quick actions" className="dock">
+            <CompareBar
+              repoKey={result.repoKey}
+              isGitRepo={result.graph.headSha !== undefined}
+              onCompareResult={handleCompareResult}
+            />
+            <div className="dock-chips">
+              <button
+                type="button"
+                disabled={largestFileId === null}
+                onClick={() => focusFile(largestFileId)}
+                title={largestFileId ?? undefined}
+                className="chip focus-ring"
+              >
+                Largest file
+              </button>
+              <button
+                type="button"
+                disabled={mostImportedFileId === null}
+                onClick={() => focusFile(mostImportedFileId)}
+                title={mostImportedFileId ?? undefined}
+                className="chip focus-ring"
+              >
+                Most imported
+              </button>
+            </div>
+          </nav>
+        )}
+      </div>
 
       {hasResult && (
         <GuidanceModal repoKey={result.repoKey} open={guidanceOpen} onClose={() => setGuidanceOpen(false)} />

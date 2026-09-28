@@ -27,8 +27,8 @@
  * `envParams(timeOfDay, weather)` — sunset warms the key, night drops its
  * intensity and raises ambient so the diorama stays readable.
  *
- * No fog, no gradient sky dome, no post-processing: the diorama floats on
- * the flat page backdrop.
+ * No fog, no sky dome, no post-processing: the canvas clears transparent so
+ * the diorama floats on the stage card's CSS backdrop.
  */
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
@@ -39,7 +39,6 @@ import type { Building, CityLayout } from "@/lib/city/layout";
 import type { ChangeSet } from "@/lib/diff/apply";
 import { derivePathNetwork } from "@/lib/city/paths";
 import { deriveStreetNetwork } from "@/lib/city/streets";
-import { PAGE_COLORS } from "@/lib/city/theme";
 import { useCityStore } from "@/lib/store";
 
 import { Buildings } from "./Buildings";
@@ -105,7 +104,7 @@ function lightingFor(env: EnvParams): {
     .lerp(new THREE.Color("#b9c8e8"), env.night * 0.85);
   // Overcast/rain dims the key; night drops it hard (windows take over).
   const keyIntensity =
-    2.1 * (1 - env.night * 0.82) * (1 - env.cloud * 0.35) * (1 - env.rain * 0.15);
+    1.85 * (1 - env.night * 0.82) * (1 - env.cloud * 0.35) * (1 - env.rain * 0.15);
   // Sky/ground fill: warm cream ↔ cool slate, dimmed by overcast.
   const skyColor = new THREE.Color("#fdf6ec")
     .lerp(new THREE.Color("#cfd8e6"), env.night * 0.75)
@@ -426,11 +425,16 @@ export function CityScene({
       orthographic
       shadows="percentage"
       dpr={[1, 2]}
-      gl={{ antialias: true, powerPreference: "high-performance" }}
+      gl={{
+        antialias: true,
+        alpha: true,
+        powerPreference: "high-performance",
+        toneMapping: THREE.NeutralToneMapping,
+      }}
       camera={{ position: [0, 150, 180], near: 1, far: 3000, zoom: 1 }}
       onPointerMissed={() => select(null)}
     >
-      <color attach="background" args={[PAGE_COLORS.backdrop]} />
+      {/* Transparent clear: the stage card's cream gradient is the backdrop. */}
       <SceneEnvContext.Provider value={env}>
         <Lighting env={env} />
 

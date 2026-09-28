@@ -1,82 +1,100 @@
 "use client";
 
 /**
- * The stacked wooden slab under the city — the plywood-strata base from the
- * Small World reference: 3–4 thin boxes with slightly varied warm wood tones,
- * each wider than the one above, extending downward from y=0.
+ * The wooden board under the city — the Small World plywood block: a thick,
+ * flush-sided slab built from thin alternating wood laminations, plus a soft
+ * drop shadow on the stage so the board floats like a tabletop model.
  *
- * The top slab's top face is the "table" the lawn sits on; the visible edges
- * between slabs read as plywood layers. Simple boxes, no normal maps — the
- * look comes from the tone steps and the soft key-light shadowing.
+ * The board footprint matches the ground plane exactly (Environment's lawn
+ * margin), so the concrete runs right to the edge and the wood only shows on
+ * the sides — the reference look.
  */
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 
 import type { LayoutBounds } from "./orbitMath";
 
-/** Slab stack definition: one entry per plywood layer, top first. */
-const SLABS = [
-  { tone: "#C9B391", thickness: 2.2, overhang: 26 },
-  { tone: "#BDAA84", thickness: 2.6, overhang: 32 },
-  { tone: "#B1976F", thickness: 3.0, overhang: 38 },
-  { tone: "#A3865F", thickness: 3.4, overhang: 44 },
+/** Must match Environment.tsx LAWN_MARGIN so board and ground are flush. */
+const GROUND_MARGIN = 24;
+/** Lamination stack, top first: light birch alternating with deeper ply. */
+const LAYERS = [
+  { tone: "#D8C29C", thickness: 1.6 },
+  { tone: "#C4A87C", thickness: 0.45 },
+  { tone: "#DCC6A1", thickness: 1.8 },
+  { tone: "#C1A378", thickness: 0.45 },
+  { tone: "#D6BF97", thickness: 1.8 },
+  { tone: "#BF9F72", thickness: 0.45 },
+  { tone: "#D3BA91", thickness: 1.8 },
+  { tone: "#B8976A", thickness: 0.6 },
 ] as const;
+const TOTAL_THICKNESS = LAYERS.reduce((sum, layer) => sum + layer.thickness, 0);
 
-/** Extra padding beyond the layout rect so the slab edge is always visible. */
-const BASE_MARGIN = 6;
+/** Soft rectangular drop-shadow texture (blurred rounded rect). */
+function makeShadowTexture(): THREE.CanvasTexture | null {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (ctx === null) return null;
+  ctx.filter = "blur(18px)";
+  ctx.fillStyle = "rgba(60,48,30,0.38)";
+  ctx.fillRect(size * 0.16, size * 0.16, size * 0.68, size * 0.68);
+  return new THREE.CanvasTexture(canvas);
+}
 
 export function DioramaBase({ bounds }: { bounds: LayoutBounds }) {
-  const width = bounds.maxX - bounds.minX;
-  const depth = bounds.maxZ - bounds.minZ;
+  const width = bounds.maxX - bounds.minX + GROUND_MARGIN * 2;
+  const depth = bounds.maxZ - bounds.minZ + GROUND_MARGIN * 2;
   const centerX = (bounds.minX + bounds.maxX) / 2;
   const centerZ = (bounds.minZ + bounds.maxZ) / 2;
 
   const materials = useMemo(
     () =>
-      SLABS.map(
-        (slab) =>
-          new THREE.MeshStandardMaterial({
-            color: slab.tone,
-            roughness: 0.92,
-            metalness: 0,
-          }),
+      LAYERS.map(
+        (layer) => new THREE.MeshStandardMaterial({ color: layer.tone, roughness: 0.85, metalness: 0 }),
       ),
     [],
   );
+  const shadowTexture = useMemo(() => makeShadowTexture(), []);
+  useEffect(
+    () => () => {
+      materials.forEach((material) => material.dispose());
+      shadowTexture?.dispose();
+    },
+    [materials, shadowTexture],
+  );
 
-  // y positions: stack downward from just under the ground plane (y=0).
-  // Pure prefix sum (no outer-let mutation) — each slab sits below the
-  // cumulative thickness of the slabs above it, with a tiny overlap into the
-  // lawn plane to avoid a hairline gap.
-  const slabs = SLABS.map((slab, i) => ({
-    ...slab,
-    y:
-      -0.05 -
-      SLABS.slice(0, i).reduce((sum, s) => sum + s.thickness, 0) -
-      slab.thickness / 2,
-    key: `slab-${i}`,
+  // Stack downward from just under the ground plane (y=0).
+  const layers = LAYERS.map((layer, i) => ({
+    ...layer,
+    y: -0.02 - LAYERS.slice(0, i).reduce((sum, l) => sum + l.thickness, 0) - layer.thickness / 2,
   }));
 
   return (
     <group>
-      {slabs.map((slab, i) => (
+      {layers.map((layer, i) => (
         <mesh
-          key={slab.key}
-          position={[centerX, slab.y, centerZ]}
+          key={`ply-${i}`}
+          position={[centerX, layer.y, centerZ]}
           material={materials[i]}
-          castShadow
+          castShadow={i === 0}
           receiveShadow
         >
-          <boxGeometry
-            args={[
-              width + (slab.overhang + BASE_MARGIN) * 2,
-              slab.thickness,
-              depth + (slab.overhang + BASE_MARGIN) * 2,
-            ]}
-          />
+          <boxGeometry args={[width, layer.thickness, depth]} />
         </mesh>
       ))}
+      {shadowTexture !== null && (
+        <mesh
+          rotation-x={-Math.PI / 2}
+          position={[centerX + 10, -TOTAL_THICKNESS - 0.3, centerZ + 16]}
+          scale={[width * 1.45, depth * 1.45, 1]}
+        >
+          <planeGeometry />
+          <meshBasicMaterial map={shadowTexture} transparent depthWrite={false} />
+        </mesh>
+      )}
     </group>
   );
 }
