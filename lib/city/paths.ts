@@ -317,8 +317,13 @@ export function derivePathNetwork(layout: CityLayout): PathNetwork {
   const components = Array.from(uf.components().values());
   if (components.length > 1) {
     // Sort components deterministically (by first id) so the bridging order
-    // is stable.
-    components.sort((a, b) => (a[0] ?? "").localeCompare(b[0] ?? ""));
+    // is stable. Plain codepoint comparison — localeCompare is banned
+    // (locale-dependent; the global constraint applies to this module too).
+    components.sort((a, b) => {
+      const idA = a[0] ?? "";
+      const idB = b[0] ?? "";
+      return idA < idB ? -1 : idA > idB ? 1 : 0;
+    });
     const rest = components.slice(1);
     for (const group of rest) {
       // Nearest pair between this component and ALL nodes so far (main +
