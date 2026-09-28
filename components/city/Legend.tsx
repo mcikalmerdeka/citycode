@@ -18,6 +18,7 @@
 import { compareAccent } from "./compareAccent";
 import { useCityStore } from "@/lib/store";
 import type { CompareMode } from "@/lib/store";
+import { GROUND_COLORS } from "@/lib/city/theme";
 
 const SWATCH_BOX = "flex h-4 w-4 shrink-0 items-center justify-center";
 
@@ -76,10 +77,24 @@ export function Legend() {
         </li>
         <li className="flex items-center gap-2.5">
           <span className={SWATCH_BOX} aria-hidden="true">
-            <span className="h-[2px] w-4 rounded-full bg-[#77746F]" />
+            <span
+              className="h-[3px] w-4 rounded-[1px]"
+              style={{ background: GROUND_COLORS.asphalt }}
+            />
           </span>
           <span className="text-[11px] leading-none text-[var(--ink-secondary)]">
-            line · import road
+            street · tarmac between blocks
+          </span>
+        </li>
+        <li className="flex items-center gap-2.5">
+          <span className={SWATCH_BOX} aria-hidden="true">
+            <span
+              className="h-[3px] w-4 rounded-[1px]"
+              style={{ background: GROUND_COLORS.routeAccent }}
+            />
+          </span>
+          <span className="text-[11px] leading-none text-[var(--ink-secondary)]">
+            accent · import route along streets
           </span>
         </li>
         <li className="flex items-center gap-2.5">

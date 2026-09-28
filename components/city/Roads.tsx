@@ -1,28 +1,27 @@
 "use client";
 
 /**
- * Roads — warm diorama tarmac batched into merged ribbon meshes: asphalt,
- * cream curbs, and dashed center markings, each group ONE merged mesh
- * (instead of thousands of 1px drei <Line>s).
+ * Roads — street tarmac batched into merged ribbon meshes: asphalt, cream
+ * curbs, and dashed center markings, each group ONE merged mesh (instead of
+ * thousands of 1px drei <Line>s).
  *
  * Geometry decision (measured, documented per the Phase 3D brief): flat
  * mitered RIBBONS, not TubeGeometry. A ribbon segment costs 2 triangles; a
  * tube at even 6 radial segments costs 12+ and rounds a shape that should
- * read as tarmac. With ~3k edges × ≤4 waypoints the whole road network is
- * ~25k triangles in four draw calls — trivially inside the frame budget.
+ * read as tarmac. With ~36 corridors the whole street grid is a few thousand
+ * triangles in three draw calls — trivially inside the frame budget.
  *
- * Routing: waypoints come from the pure {@link routeRoad} helper (Manhattan
- * L-routes trimmed to building footprint edges) — deterministic per edge, so
- * the street grid is stable for a given layout. The layout's own road data
- * (center-to-center) is untouched; re-routing is a render-time concern.
+ * Routing: tarmac comes from the street corridors of
+ * {@link deriveStreetNetwork} (layout → pure geometry). The layout's import
+ * edges are NOT drivable and are never drawn as roads; they only reach this
+ * component to derive the import-route ACCENT — corridors crossed by an
+ * import route are overpainted with a thin routeAccent strip, the one
+ * data-encoding colour. There is no blast tinting on corridors (compare
+ * emphasis lives in ChangeOverlays + the accent).
  *
- * Diorama look (Small World reference): warm gray asphalt (#77746F), cream
- * curbs hugging both road sides, and static white dashed center markings
- * (#ECE7DC) via a uv-based dash shader — no time uniform, so markings never
- * animate. Blast-radius roads (compare mode; the importer side — fromId —
- * carries the "blast" status) keep a slow emissive pulse traveling along the
- * ribbon via a shared uTime uniform, retinted to the warm COMPARE_ACCENTS
- * blast red instead of the old pure red.
+ * Diorama look (Small World reference): dark asphalt (#4A4844), cream curbs
+ * hugging both street sides, static white dashed center markings (#ECE7DC)
+ * via a uv-based dash shader — no time uniform, nothing animates.
  *
  * Elevation: the lawn ground plane sits at y=0 (Environment), buildings at
  * y=0 — roads float just above the lawn at 0.08 with polygonOffset so they
@@ -33,34 +32,31 @@
  * them.
  */
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import * as THREE from "three";
-import { useFrame } from "@react-three/fiber";
 
 import type { Building, Road } from "@/lib/city/layout";
 import { routeRoad } from "@/lib/city/layout";
-import type { NodeChange } from "@/lib/diff/apply";
-import { COMPARE_ACCENTS, GROUND_COLORS } from "@/lib/city/theme";
+import type { StreetNetwork } from "@/lib/city/streets";
+import { GROUND_COLORS } from "@/lib/city/theme";
 
 const ROAD_COLOR = GROUND_COLORS.asphalt;
 const CURB_COLOR = GROUND_COLORS.curb;
 const MARKING_COLOR = GROUND_COLORS.marking;
+const ROUTE_COLOR = GROUND_COLORS.routeAccent;
 /** Ribbon elevation — just above the lawn (y=0), below district curb tops. */
 const ROAD_Y = 0.08;
 /** Curbs/markings ride a hair above the asphalt to avoid z-fighting. */
 const CURB_Y = 0.1;
 const MARKING_Y = 0.11;
-const ROAD_WIDTH = 3.2;
-const BLAST_ROAD_WIDTH = 3.6;
+/** Route accent rides above the asphalt, below the markings. */
+const ROUTE_Y = 0.12;
 /** Curb strip profile: thin raised edge just outside the asphalt edge. */
 const CURB_WIDTH = 0.5;
 const CURB_INSET = 0.15;
 /** Center marking dash: dash length/gap along uv.x (world units). */
 const DASH_LENGTH = 2.2;
 const DASH_GAP = 2.2;
-/** Traveling-pulse speed (world units/s) and period (world units). */
-const DASH_SPEED = 8;
-const DASH_PERIOD = 10;
 
 /** Accumulators for one merged ribbon mesh. */
 interface RibbonData {
@@ -193,90 +189,116 @@ function offsetPolyline(
 }
 
 export function Roads({
+  streets,
   roads,
   buildings,
-  changes,
 }: {
+  /** The derived street network — corridors become the tarmac. */
+  streets: StreetNetwork;
+  /** Import edges — used ONLY to derive the route accent overlay. */
   roads: Road[];
   buildings: Building[];
-  /** Compare status per fileId — only the "blast" flag is read here. */
-  changes?: Map<string, NodeChange>;
 }) {
-  const { staticGeometry, blastGeometry, curbGeometry, markingGeometry } = useMemo(() => {
+  const { tarmacGeometry, curbGeometry, markingGeometry, accentGeometry } = useMemo(() => {
     const byId = new Map(buildings.map((building) => [building.fileId, building]));
-    const staticData = emptyRibbon();
-    const blastData = emptyRibbon();
+    const tarmacData = emptyRibbon();
     const curbData = emptyRibbon();
     const markingData = emptyRibbon();
+    const accentData = emptyRibbon();
+
+    // ---- Tarmac, curbs and markings: one ribbon per street corridor.
+    for (const corridor of streets.corridors) {
+      const polyline =
+        corridor.axis === "x"
+          ? [
+              { x: corridor.center, z: corridor.from },
+              { x: corridor.center, z: corridor.to },
+            ]
+          : [
+              { x: corridor.from, z: corridor.center },
+              { x: corridor.to, z: corridor.center },
+            ];
+      appendRibbon(polyline, ROAD_Y, corridor.width, tarmacData);
+      // Curbs hug both asphalt edges.
+      const edge = corridor.width / 2 + CURB_INSET;
+      appendRibbon(
+        offsetPolyline(polyline, edge),
+        CURB_Y,
+        CURB_WIDTH,
+        curbData,
+      );
+      appendRibbon(
+        offsetPolyline(polyline, -edge),
+        CURB_Y,
+        CURB_WIDTH,
+        curbData,
+      );
+      // Dashed center markings run the full corridor in every mode.
+      appendRibbon(polyline, MARKING_Y, 0.28, markingData);
+    }
+
+    // ---- Import-route accent: corridors crossed by an import edge's L-route
+    // get a thin accent strip. The route is derived render-side (pure) from
+    // the buildings; each route waypoint marks the corridors it lands on —
+    // one strip per touched corridor, no double paints.
+    const touched = new Set<string>();
     for (const road of roads) {
       const from = byId.get(road.fromId);
       const to = byId.get(road.toId);
       if (from === undefined || to === undefined) continue;
-      const waypoints = routeRoad(from, to);
-      // Blast emphasis derives from the IMPORTER side (fromId), mirroring
-      // how Buildings recolors the same status.
-      const blast = changes?.get(road.fromId)?.status === "blast";
-      const width = blast ? BLAST_ROAD_WIDTH : ROAD_WIDTH;
-      appendRibbon(waypoints, ROAD_Y, width, blast ? blastData : staticData);
-      // Curbs hug both asphalt edges (no ribbon over a blast pulse — curbs
-      // stay cream in every mode).
-      const edge = width / 2 + CURB_INSET;
-      appendRibbon(offsetPolyline(waypoints, edge), CURB_Y, CURB_WIDTH, curbData);
-      appendRibbon(offsetPolyline(waypoints, -edge), CURB_Y, CURB_WIDTH, curbData);
-      // Dashed center markings run the full polyline in every mode.
-      appendRibbon(waypoints, MARKING_Y, 0.28, markingData);
+      for (const waypoint of routeRoad(from, to)) {
+        for (const corridor of streets.corridors) {
+          const across =
+            corridor.axis === "x"
+              ? waypoint.x - corridor.center
+              : waypoint.z - corridor.center;
+          const along =
+            corridor.axis === "x" ? waypoint.z : waypoint.x;
+          if (
+            Math.abs(across) <= corridor.width / 2 &&
+            along >= corridor.from &&
+            along <= corridor.to
+          ) {
+            touched.add(
+              `${corridor.axis}-${corridor.center}-${corridor.from}-${corridor.to}`,
+            );
+          }
+        }
+      }
     }
+    const keyFor = (corridor: StreetNetwork["corridors"][number]): string =>
+      `${corridor.axis}-${corridor.center}-${corridor.from}-${corridor.to}`;
+    for (const corridor of streets.corridors) {
+      if (!touched.has(keyFor(corridor))) continue;
+      const polyline =
+        corridor.axis === "x"
+          ? [
+              { x: corridor.center, z: corridor.from },
+              { x: corridor.center, z: corridor.to },
+            ]
+          : [
+              { x: corridor.from, z: corridor.center },
+              { x: corridor.to, z: corridor.center },
+            ];
+      appendRibbon(polyline, ROUTE_Y, corridor.width * 0.3, accentData);
+    }
+
     return {
-      staticGeometry: buildGeometry(staticData),
-      blastGeometry: buildGeometry(blastData),
+      tarmacGeometry: buildGeometry(tarmacData),
       curbGeometry: buildGeometry(curbData),
       markingGeometry: buildGeometry(markingData),
+      accentGeometry: buildGeometry(accentData),
     };
-  }, [roads, buildings, changes]);
+  }, [streets, roads, buildings]);
 
   useEffect(
     () => () => {
-      staticGeometry?.dispose();
-      blastGeometry?.dispose();
+      tarmacGeometry?.dispose();
       curbGeometry?.dispose();
       markingGeometry?.dispose();
+      accentGeometry?.dispose();
     },
-    [staticGeometry, blastGeometry, curbGeometry, markingGeometry],
-  );
-
-  // One shared time uniform drives every blast pulse; reduced-motion users
-  // get a frozen (still visible) emphasis instead of a traveling one.
-  const dashTime = useRef({ value: 0 });
-  const reducedMotion = useRef(false);
-  useEffect(() => {
-    reducedMotion.current = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  }, []);
-  useFrame((_, delta) => {
-    if (!reducedMotion.current) dashTime.current.value += delta;
-  });
-
-  const injectBlastDash = useMemo(
-    () => (shader: THREE.WebGLProgramParametersWithUniforms) => {
-      shader.uniforms.uTime = dashTime.current;
-      shader.vertexShader = shader.vertexShader
-        .replace("#include <common>", "#include <common>\nvarying vec2 vRoadUv;")
-        .replace("#include <uv_vertex>", "#include <uv_vertex>\nvRoadUv = uv;");
-      shader.fragmentShader = shader.fragmentShader
-        .replace(
-          "#include <common>",
-          "#include <common>\nuniform float uTime;\nvarying vec2 vRoadUv;",
-        )
-        .replace(
-          "#include <emissivemap_fragment>",
-          `#include <emissivemap_fragment>
-           {
-             float m = fract((vRoadUv.x - uTime * ${DASH_SPEED.toFixed(1)}) / ${DASH_PERIOD.toFixed(1)});
-             float dash = 1.0 - smoothstep(0.3, 0.35, m);
-             totalEmissiveRadiance += vec3(1.0, 0.36, 0.3) * dash * 1.4;
-           }`,
-        );
-    },
-    [],
+    [tarmacGeometry, curbGeometry, markingGeometry, accentGeometry],
   );
 
   // Static dashed center markings: uv.x is cumulative path length, so a
@@ -303,8 +325,8 @@ export function Roads({
 
   return (
     <group>
-      {staticGeometry !== null && (
-        <mesh geometry={staticGeometry} receiveShadow dispose={null}>
+      {tarmacGeometry !== null && (
+        <mesh geometry={tarmacGeometry} receiveShadow dispose={null}>
           <meshStandardMaterial
             color={ROAD_COLOR}
             roughness={0.95}
@@ -313,20 +335,6 @@ export function Roads({
             polygonOffset
             polygonOffsetFactor={-2}
             polygonOffsetUnits={-2}
-          />
-        </mesh>
-      )}
-      {blastGeometry !== null && (
-        <mesh geometry={blastGeometry} receiveShadow dispose={null}>
-          <meshStandardMaterial
-            color={COMPARE_ACCENTS.blast}
-            roughness={0.9}
-            metalness={0}
-            side={THREE.DoubleSide}
-            polygonOffset
-            polygonOffsetFactor={-2}
-            polygonOffsetUnits={-2}
-            onBeforeCompile={injectBlastDash}
           />
         </mesh>
       )}
@@ -354,6 +362,21 @@ export function Roads({
             polygonOffsetFactor={-3}
             polygonOffsetUnits={-3}
             onBeforeCompile={injectMarkingDash}
+          />
+        </mesh>
+      )}
+      {accentGeometry !== null && (
+        <mesh geometry={accentGeometry} dispose={null}>
+          <meshStandardMaterial
+            color={ROUTE_COLOR}
+            roughness={0.85}
+            metalness={0}
+            side={THREE.DoubleSide}
+            transparent
+            opacity={0.85}
+            polygonOffset
+            polygonOffsetFactor={-3}
+            polygonOffsetUnits={-3}
           />
         </mesh>
       )}
