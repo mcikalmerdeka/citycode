@@ -440,9 +440,32 @@ describe("deriveStreetNetwork — blocks stay clear of tarmac", () => {
       roads: [],
     };
     for (const inset of deriveStreetNetwork(tiny).blockInsets.values()) {
-      expect(inset.x).toBeLessThan(9 / 2);
-      expect(inset.z).toBeLessThan(9 / 2);
+      // Per-axis half-extent cap (never more than half the block on any axis):
+      // the renderer floors the box at 1u, so "never negative" means <= half.
+      // The old quarter-cap (min(w,d)/4) was superseded — see the test below.
+      expect(inset.x).toBeLessThanOrEqual(9 / 2);
+      expect(inset.z).toBeLessThanOrEqual(9 / 2);
     }
+  });
+
+  it("pulls a block back far enough that its edge clears the street tarmac", () => {
+    // Two ADJACENT 9x9 districts share the edge x=0; the separator street is
+    // 6 wide centred on that edge, so each kerb sits 3u INSIDE the block. The
+    // rendered block must pull back at least those 3u — the old quarter-cap
+    // (min(w,d)/4 = 2.25) left the edge 0.75u inside the tarmac, where the
+    // opaque curb box covered the road (the "road disappears at zoom" bug).
+    const layout: CityLayout = {
+      repoPath: "/r",
+      buildings: [],
+      districts: [
+        { path: "a", x: -4.5, z: 0, w: 9, d: 9, label: "a", depth: 0 },
+        { path: "b", x: 4.5, z: 0, w: 9, d: 9, label: "b", depth: 0 },
+      ],
+      roads: [],
+    };
+    const insets = deriveStreetNetwork(layout).blockInsets;
+    expect(insets.get("a")?.x).toBeGreaterThanOrEqual(3);
+    expect(insets.get("b")?.x).toBeGreaterThanOrEqual(3);
   });
 
   it("keeps the largest pull-back when several streets touch one block side", () => {

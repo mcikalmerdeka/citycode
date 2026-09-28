@@ -35,9 +35,11 @@
  *    the conservative per-axis values (apply each to both sides of its axis);
  *    `top` (-Z) and `bottom` (+Z) carry the split for the Z axis so a renderer
  *    can use the asymmetry.
- * 3. **Every value is clamped to a quarter of the block's short side** — the
- *    same rule lib/city/layout.ts uses when padding a block for its children —
- *    so a small block can never invert into a negative extent.
+ * 3. **Every value is clamped to half the block's extent on its own axis** —
+ *    `x` to `w/2`, `top`/`bottom` to `d/2` each — so a small block can never
+ *    invert into a negative extent (the renderer floors the box at 1u). This
+ *    replaces the earlier quarter cap, which could under-pull below a
+ *    street's kerb and leave a block edge sitting inside the tarmac.
  *
  * ## Guarantees
  *
@@ -146,12 +148,17 @@ export function deriveBlockInsets(
         else bottom = Math.max(bottom, maxZ - (corridor.center - half));
       }
     }
-    const limit = Math.min(district.w, district.d) / 4;
+    // Per-axis half-extent caps: a rendered block may pull back up to half
+    // its width (X) / depth (Z), never more, so the box never inverts — the
+    // renderer floors it at 1u beyond that. The old cap (min(w,d)/4) could
+    // under-pull below the street kerb (a 9x9 district beside a 6u street
+    // needs 3 but got 2.25), leaving the rendered edge inside the tarmac
+    // where the opaque curb box covered the road.
     insets.set(district.path, {
-      x: Math.min(Math.max(lowX, highX), limit),
-      z: Math.min(Math.max(top, bottom), limit),
-      top: Math.min(top, limit),
-      bottom: Math.min(bottom, limit),
+      x: Math.min(Math.max(lowX, highX), district.w / 2),
+      z: Math.min(Math.max(top, bottom), district.d / 2),
+      top: Math.min(top, district.d / 2),
+      bottom: Math.min(bottom, district.d / 2),
     });
   }
   return insets;
