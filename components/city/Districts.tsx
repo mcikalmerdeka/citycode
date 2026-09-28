@@ -5,6 +5,11 @@
  * frames a ground patch (lawn for leafy districts, plaza for high-traffic
  * ones), with a soft contact-shadow blob grounding the block onto the lawn.
  *
+ * Street pull-back: every block box is inset by its district's `blockInsets`
+ * (from lib/city/blockInsets.ts via the street network) so the rendered curb
+ * never reaches into the street tarmac; small blocks are floored at 1u so the
+ * box can never invert.
+ *
  * Ground-patch rule (deterministic, documented for the sim/render seam): a
  * district gets the PLAZA tone when its buildings' total LOC is at least
  * half of the busiest district's total LOC (high-traffic = downtown plaza);
@@ -30,11 +35,12 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 
 import type { Building, District } from "@/lib/city/layout";
+import type { StreetNetwork } from "@/lib/city/streets";
 import { GROUND_COLORS } from "@/lib/city/theme";
 import { useCityStore } from "@/lib/store";
 
 /** Curb value range: depth 0 starts at BASE, deepening toward TOP. */
-const CURB_BASE = "#E6E1D8";
+const CURB_BASE = GROUND_COLORS.kerbLight;
 const CURB_TOP = "#CFC7B8";
 const CURB_HOVER_EMISSIVE = "#fff3d6";
 /** Ground patch tops (thin raised patch above the lawn plane at y=0). */
@@ -149,9 +155,12 @@ function DistrictLabel({
 export function Districts({
   districts,
   buildings,
+  streets,
 }: {
   districts: District[];
   buildings: Building[];
+  /** Street network — its blockInsets drive the per-block pull-back. */
+  streets: StreetNetwork;
 }) {
   const showLabels = useCityStore((state) => state.showLabels);
 
@@ -226,13 +235,26 @@ export function Districts({
         const patchColor = isPlazaDistrict(district, totalHeight)
           ? GROUND_COLORS.plaza
           : GROUND_COLORS.lawn;
+        // Pull the rendered block back so street tarmac never covers it:
+        // X sides share the per-axis pull, Z uses the top(-Z)/bottom(+Z) split
+        // (lib/city/blockInsets.ts semantics). The box shifts toward the side
+        // with the smaller pull so the curb ring stays centred on the block.
+        const inset = streets.blockInsets.get(district.path) ?? {
+          x: 0,
+          z: 0,
+          top: 0,
+          bottom: 0,
+        };
+        const blockW = Math.max(1, district.w - 2 * inset.x);
+        const blockD = Math.max(1, district.d - inset.top - inset.bottom);
+        const blockZ = (inset.bottom - inset.top) / 2;
         return (
           <group key={district.path} position={[district.x, 0, district.z]}>
             {contact !== null && (
               <mesh
-                position={[0, 0.015, 0]}
+                position={[0, 0.015, blockZ]}
                 rotation-x={-Math.PI / 2}
-                scale={[district.w * 1.25, district.d * 1.25, 1]}
+                scale={[blockW * 1.25, blockD * 1.25, 1]}
                 geometry={contact.geometry}
                 material={contact.material}
                 dispose={null}
@@ -240,14 +262,14 @@ export function Districts({
             )}
             {/* Curb: the raised cream frame between street and block. */}
             <mesh
-              position={[0, CURB_H / 2, 0]}
+              position={[0, CURB_H / 2, blockZ]}
               receiveShadow
               ref={(mesh: THREE.Mesh | null) => {
                 if (mesh === null) curbRefs.current.delete(district.path);
                 else curbRefs.current.set(district.path, mesh);
               }}
             >
-              <boxGeometry args={[district.w, CURB_H, district.d]} />
+              <boxGeometry args={[blockW, CURB_H, blockD]} />
               <meshStandardMaterial
                 color={curbColor}
                 emissive={CURB_HOVER_EMISSIVE}
@@ -257,9 +279,13 @@ export function Districts({
               />
             </mesh>
             {/* Ground patch: lawn or plaza tone, slightly above the lawn. */}
-            <mesh position={[0, PATCH_Y, 0]} receiveShadow>
+            <mesh position={[0, PATCH_Y, blockZ]} receiveShadow>
               <boxGeometry
-                args={[district.w - 2 * curbWidth, PATCH_H, district.d - 2 * curbWidth]}
+                args={[
+                  Math.max(0.5, blockW - 2 * curbWidth),
+                  PATCH_H,
+                  Math.max(0.5, blockD - 2 * curbWidth),
+                ]}
               />
               <meshStandardMaterial color={patchColor} roughness={0.95} metalness={0} />
             </mesh>

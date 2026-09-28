@@ -10,11 +10,15 @@
  */
 
 import type { CityLayout } from "@/lib/city/layout";
+import { deriveStreetNetwork } from "@/lib/city/streets";
 
 export interface CityStats {
   files: number;
   districts: number;
+  /** Import edges — the code's dependency lines, never drivable. */
   roads: number;
+  /** Street corridors the tarmac is drawn on. */
+  streets: number;
 }
 
 /** Pure count derivation from a layout — no React, no DOM. */
@@ -23,6 +27,7 @@ export function computeCityStats(layout: CityLayout): CityStats {
     files: layout.buildings.length,
     districts: layout.districts.length,
     roads: layout.roads.length,
+    streets: deriveStreetNetwork(layout).corridors.length,
   };
 }
 
@@ -43,7 +48,7 @@ export function StatsBar({ layout }: { layout: CityLayout }) {
     <div className="flex flex-wrap items-center gap-1.5" aria-label="City statistics">
       <StatPill value={stats.files} label="files" />
       <StatPill value={stats.districts} label="districts" />
-      <StatPill value={stats.roads} label="roads" />
+      <StatPill value={stats.streets} label="streets" />
     </div>
   );
 }

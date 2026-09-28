@@ -71,7 +71,7 @@ describe("theme palettes", () => {
     expect(GROUND_COLORS.plaza).toBe("#D9D1C3");
     expect(GROUND_COLORS.sidewalk).toBe("#D7D1C6");
     expect(GROUND_COLORS.curb).toBe("#E6E1D8");
-    expect(GROUND_COLORS.asphalt).toBe("#77746F");
+    expect(GROUND_COLORS.asphalt).toBe("#4A4844");
     expect(GROUND_COLORS.marking).toBe("#ECE7DC");
   });
 
@@ -123,5 +123,14 @@ describe("theme palettes", () => {
       "wind",
       "wet",
     ]);
+  });
+
+  it("exposes the street-surface tokens the renderer needs", () => {
+    expect(GROUND_COLORS.asphalt).toBe("#4A4844");
+    expect(GROUND_COLORS.pavement).toBe("#CFC9BD");
+    expect(GROUND_COLORS.kerbLight).toBe("#EDE8DE");
+    expect(GROUND_COLORS.crosswalk).toBe("#F2EEE6");
+    expect(GROUND_COLORS.routeAccent).toBe("#C98B4E");
+    expect(GROUND_COLORS.lampGlow).toBe("#F2E2B8");
   });
 });

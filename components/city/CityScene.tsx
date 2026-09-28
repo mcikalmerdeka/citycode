@@ -38,6 +38,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import type { Building, CityLayout } from "@/lib/city/layout";
 import type { ChangeSet } from "@/lib/diff/apply";
 import { derivePathNetwork } from "@/lib/city/paths";
+import { deriveStreetNetwork } from "@/lib/city/streets";
 import { PAGE_COLORS } from "@/lib/city/theme";
 import { useCityStore } from "@/lib/store";
 
@@ -415,8 +416,10 @@ export function CityScene({
 
   const bounds = useMemo(() => layoutBounds(layout), [layout]);
   const env = useMemo(() => envParams(timeOfDay, weather), [timeOfDay, weather]);
-  // Sim substrate (sidewalk graph + road polylines) — derived once per layout.
+  // Sim substrate (sidewalk graph + corridor roads) — derived once per layout.
   const network = useMemo(() => derivePathNetwork(layout), [layout]);
+  // Street display network — derived once per layout, shared by render layers.
+  const streets = useMemo(() => deriveStreetNetwork(layout), [layout]);
 
   return (
     <Canvas
@@ -441,8 +444,16 @@ export function CityScene({
         <group key={`${layout.repoPath}:${layout.buildings.length}`}>
           <Environment bounds={bounds} />
           <DioramaBase bounds={bounds} />
-          <Districts districts={layout.districts} buildings={layout.buildings} />
-          <Roads roads={layout.roads} buildings={layout.buildings} changes={compareMap} />
+          <Districts
+            districts={layout.districts}
+            buildings={layout.buildings}
+            streets={streets}
+          />
+          <Roads
+            streets={streets}
+            roads={layout.roads}
+            buildings={layout.buildings}
+          />
           <Buildings buildings={layout.buildings} changes={compareMap} envParams={env} />
           <Simulation
             network={network}

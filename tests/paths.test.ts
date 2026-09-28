@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { computeCityLayout } from "@/lib/city/layout";
 import type { Building, CityLayout } from "@/lib/city/layout";
 import { derivePathNetwork } from "@/lib/city/paths";
+import { deriveStreetNetwork, STREET_NODE_STEP, STREET_WIDTH } from "@/lib/city/streets";
+import { buildRoadGraph } from "@/lib/sim/vehicles";
 import type { CodeGraph, FileNode, ImportEdge } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -199,10 +201,10 @@ describe("derivePathNetwork — buildings stay walkable-free", () => {
 });
 
 describe("derivePathNetwork — roads", () => {
-  it("one RoadPolyline per layout road, with consistent width", () => {
+  it("one RoadPolyline per derived corridor, with consistent width", () => {
     const layout = fixtureLayout();
     const network = derivePathNetwork(layout);
-    expect(network.roads).toHaveLength(layout.roads.length);
+    expect(network.roads).toHaveLength(deriveStreetNetwork(layout).corridors.length);
     const widths = new Set(network.roads.map((road) => road.width));
     expect(widths.size).toBe(1);
     const width = network.roads[0]?.width ?? 0;
@@ -220,17 +222,22 @@ describe("derivePathNetwork — roads", () => {
     expect(ids.size).toBe(network.roads.length);
   });
 
-  it("road polylines keep the layout's waypoints (same count, same endpoints)", () => {
+  it("road polylines keep their corridor's endpoints (same count, same ends)", () => {
     const layout = fixtureLayout();
     const network = derivePathNetwork(layout);
-    for (let i = 0; i < layout.roads.length; i++) {
+    const corridors = deriveStreetNetwork(layout).corridors;
+    expect(network.roads.length).toBe(corridors.length);
+    for (let i = 0; i < corridors.length; i++) {
       const road = network.roads[i];
-      const source = layout.roads[i];
+      const corridor = corridors[i];
       expect(road).toBeDefined();
-      if (road === undefined || source === undefined) continue;
-      expect(road.points).toHaveLength(source.points.length);
-      expect(road.points[0]).toEqual(source.points[0]);
-      expect(road.points[road.points.length - 1]).toEqual(source.points[source.points.length - 1]);
+      if (road === undefined) continue;
+      const first = road.points[0];
+      const last = road.points[road.points.length - 1];
+      const startAlong = corridor.axis === "x" ? first?.z : first?.x;
+      const endAlong = corridor.axis === "x" ? last?.z : last?.x;
+      expect(startAlong).toBeCloseTo(corridor.from, 6);
+      expect(endAlong).toBeCloseTo(corridor.to, 6);
     }
   });
 
@@ -238,18 +245,19 @@ describe("derivePathNetwork — roads", () => {
     const layout = tinyLayout();
     const empty: CityLayout = { ...layout, roads: [] };
     const network = derivePathNetwork(empty);
-    expect(network.roads).toHaveLength(0);
+    expect(network.roads.length).toBeGreaterThan(0);
     expect(network.sidewalk.nodes.length).toBeGreaterThan(0);
   });
 });
 
 describe("derivePathNetwork — sidewalk geometry follows the layout", () => {
-  it("sidewalk nodes hug district boundaries or road sides (the documented contract)", () => {
+  it("sidewalk nodes hug district boundaries or street sides (the documented contract)", () => {
     const layout = fixtureLayout();
+    const corridors = deriveStreetNetwork(layout).corridors;
     const network = derivePathNetwork(layout);
-    // A node is legal if it sits near a district edge OR near a road
-    // polyline (within the road-side offset + sampling tolerance) — road-side
-    // sidewalks legitimately extend beyond district boundaries.
+    // A node is legal if it sits near a district edge OR near a street
+    // corridor centreline (within the pavement-middle offset + slack) —
+    // street-side sidewalks legitimately extend beyond district boundaries.
     for (const node of network.sidewalk.nodes) {
       const nearDistrict = layout.districts.some((district) => {
         // Ring nodes sit OUTSIDE the edge by SIDEWALK_OFFSET (2.5), so the
@@ -262,34 +270,22 @@ describe("derivePathNetwork — sidewalk geometry follows the layout", () => {
           Math.abs(node.z - (district.z + district.d / 2)) < 3;
         return nearX || nearZ;
       });
-      // Point-to-SEGMENT distance: road-side sidewalks are OFFSET polylines,
-      // so a node on a long leg can be far from every waypoint while sitting
-      // exactly on the offset segment (4.5 perpendicular + sampling slack).
-      const nearRoad = layout.roads.some((road) => {
-        for (let i = 0; i < road.points.length - 1; i++) {
-          const a = road.points[i];
-          const b = road.points[i + 1];
-          const dx = b.x - a.x;
-          const dz = b.z - a.z;
-          const lengthSq = dx * dx + dz * dz;
-          const t =
-            lengthSq === 0
-              ? 0
-              : Math.max(0, Math.min(1, ((node.x - a.x) * dx + (node.z - a.z) * dz) / lengthSq));
-          const ex = node.x - (a.x + dx * t);
-          const ez = node.z - (a.z + dz * t);
-          if (ex * ex + ez * ez < 36) return true;
-        }
-        return false;
+      // Point-to-centreline distance: pavement strips ride parallel to their
+      // corridor at pavementOffset (4.8), so the tolerance exceeds that.
+      const nearStreet = corridors.some((corridor) => {
+        const across = corridor.axis === "x" ? node.x - corridor.center : node.z - corridor.center;
+        const along = corridor.axis === "x" ? node.z : node.x;
+        const pavement = STREET_WIDTH / 2 + 0.6 + 2.4 / 2;
+        return Math.abs(across) <= pavement + 1 && along >= corridor.from - 1 && along <= corridor.to + 1;
       });
-      expect(nearDistrict || nearRoad, `${node.id} not near any district edge or road`).toBe(true);
+      expect(nearDistrict || nearStreet, `${node.id} not near any district edge or street`).toBe(true);
     }
   });
 
-  it("sidewalk nodes exist on both sides of each road (tiny layout)", () => {
+  it("sidewalk nodes exist on both sides of each street (tiny layout)", () => {
     const network = derivePathNetwork(tinyLayout());
-    // The tiny layout's single road runs diagonally from (-10,-10) to (10,10).
-    // Nodes offset perpendicular to it must exist on both sides.
+    // The single district's perimeter ring runs at |x|,|z| = 7 with pavement
+    // strips offset ±4.8; nodes exist on both flanks of every corridor.
     const left = network.sidewalk.nodes.some((node) => node.x - node.z < -1);
     const right = network.sidewalk.nodes.some((node) => node.x - node.z > 1);
     expect(left).toBe(true);
@@ -329,3 +325,69 @@ describe("derivePathNetwork — degenerate inputs", () => {
 
 /** Re-exported type check: Building is used by the fixture builders above. */
 export type { Building };
+
+describe("derivePathNetwork — streets, not import edges", () => {
+  it("emits road polylines for corridors even when the layout has zero roads", () => {
+    const layout = { ...fixtureLayout(), roads: [] };
+    const network = derivePathNetwork(layout);
+    expect(network.roads.length).toBeGreaterThan(0);
+    expect(network.roads.every((r) => r.id.startsWith("st-"))).toBe(true);
+  });
+
+  it("emits exactly one road polyline per derived corridor", () => {
+    const layout = fixtureLayout();
+    const network = derivePathNetwork(layout);
+    expect(network.roads).toHaveLength(deriveStreetNetwork(layout).corridors.length);
+  });
+
+  it("gives every road polyline the shared STREET_WIDTH", () => {
+    const network = derivePathNetwork(fixtureLayout());
+    for (const r of network.roads) expect(r.width).toBe(STREET_WIDTH);
+  });
+
+  it("keeps the sidewalk graph a single connected component", () => {
+    const network = derivePathNetwork(fixtureLayout());
+    expect(componentCount(network.sidewalk.nodes, network.sidewalk.segments)).toBe(1);
+  });
+
+  it("samples road polylines no further apart than STREET_NODE_STEP", () => {
+    const network = derivePathNetwork(fixtureLayout());
+    for (const r of network.roads) {
+      for (let i = 0; i < r.points.length - 1; i++) {
+        const a = r.points[i];
+        const b = r.points[i + 1];
+        expect(Math.hypot(b.x - a.x, b.z - a.z)).toBeLessThanOrEqual(STREET_NODE_STEP + 1e-6);
+      }
+    }
+  });
+
+  it("welds crossing corridors so the vehicle graph stays connected", () => {
+    const network = derivePathNetwork(fixtureLayout());
+    const graph = buildRoadGraph(network);
+    const parent = graph.nodes.map((_, i) => i);
+    const find = (x: number): number => {
+      let root = x;
+      while (parent[root] !== root) root = parent[root];
+      while (parent[x] !== root) {
+        const next = parent[x];
+        parent[x] = root;
+        x = next;
+      }
+      return root;
+    };
+    for (let i = 0; i < graph.adj.length; i++) {
+      for (const j of graph.adj[i]) {
+        const ri = find(i);
+        const rj = find(j);
+        if (ri !== rj) parent[ri] = rj;
+      }
+    }
+    const roots = new Set(graph.nodes.map((_, i) => find(i)));
+    expect(roots.size).toBe(1);
+  });
+
+  it("still falls back to a perimeter loop for a district-less layout", () => {
+    const network = derivePathNetwork({ ...fixtureLayout(), districts: [] });
+    expect(network.sidewalk.nodes.length).toBeGreaterThan(0);
+  });
+});
