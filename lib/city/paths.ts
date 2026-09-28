@@ -17,16 +17,16 @@
  *    sampled at {@link SIDEWALK_STEP} intervals along each edge, plus the
  *    four corners — so long edges get evenly spaced nodes and short edges
  *    still get their corners.
- * 2. **Road-side sidewalks.** Every layout road polyline is duplicated on
- *    both sides, offset perpendicular by {@link SIDEWALK_OFFSET} +
- *    {@link ROAD_HALF_WIDTH} (the road's half width plus a pavement gap), and
- *    sampled at the same step. This is what makes roads walkable on both
- *    sides, matching the Small World reference where pedestrians line every
- *    street.
+ * 2. **Street-side sidewalks.** Every street corridor from
+ *    {@link deriveStreetNetwork} is duplicated on both sides, offset
+ *    perpendicular to its centreline by half the tarmac plus kerb plus half
+ *    the pavement — the middle of the pavement strip — and sampled at the
+ *    same step. This is what makes streets walkable on both sides, matching
+ *    the Small World reference where pedestrians line every street.
  * 3. **Cross-connections.** At every district corner the four loop corners
- *    are joined to their nearest road-side nodes (deterministic nearest by
+ *    are joined to their nearest street-side nodes (deterministic nearest by
  *    (distance, id) tie-break), and adjacent sampled nodes along a loop or a
- *    road side are chained — so the lattice is locally dense at corners and
+ *    street side are chained — so the lattice is locally dense at corners and
  *    along streets.
  * 4. **Connectivity is a hard guarantee.** After derivation, the graph is
  *    checked with union-find; any extra components are joined by connecting
@@ -36,10 +36,12 @@
  * 5. **Node ids** are `sw-{roundX}-{roundZ}` where roundX/roundZ are the
  *    coordinates rounded to 2 decimals — stable, unique per position, and
  *    readable in the sim's debug output.
- * 6. **Roads** mirror the layout's road polylines 1:1 (same waypoints, same
- *    order) with a constant {@link ROAD_WIDTH} (~6 world units, matching the
- *    visual road width). Road ids are `rd-{fromId}→{toId}` — stable and
- *    unique per edge.
+ * 6. **Roads** are the street corridors from {@link deriveStreetNetwork} —
+ *    centreline polylines sampled at {@link STREET_NODE_STEP} plus every
+ *    intersection lying on the corridor, so crossing streets share a node
+ *    and the sim's road graph welds at junctions. The layout's import edges
+ *    are never drivable. Road ids are `st-{axis}-{center}-{from}-{to}` —
+ *    stable and unique per corridor.
  *
  * ## Guarantees
  *
@@ -48,25 +50,26 @@
  *   (tested with union-find) — or empty when the layout has no geometry.
  * - **Sanity**: no zero-length segments, no duplicate segments (undirected),
  *   no duplicate node ids, and no node inside a building footprint (nodes
- *   are offset outside district edges and road centerlines; buildings sit
+ *   are offset outside district edges and street centrelines; buildings sit
  *   inside districts with padding, so the offset clears them — tested).
  */
 
 import type { Building, CityLayout, District } from "./layout";
 import type { PathNetwork, RoadPolyline, SidewalkNetwork } from "../sim/types";
+import {
+  deriveStreetNetwork,
+  KERB_WIDTH,
+  PAVEMENT_WIDTH,
+  STREET_NODE_STEP,
+  STREET_WIDTH,
+  type StreetCorridor,
+  type StreetIntersection,
+} from "./streets";
 
 /** Sidewalk offset outside a district edge / road centerline (world units). */
 const SIDEWALK_OFFSET = 2.5;
 /** Sampling step along a district edge or road side (world units). */
 const SIDEWALK_STEP = 6;
-/** Road half width — roads are ~6 units wide, so the centerline clears 3. */
-const ROAD_HALF = 3;
-/** Extra pavement gap between the road edge and the road-side sidewalk. */
-const PAVEMENT_GAP = 1.5;
-/** Constant road width for every RoadPolyline (sim metadata; the visual
- * ribbon in Roads.tsx is narrower — this width keeps agents' lane offsets
- * comfortably inside the street). */
-export const ROAD_WIDTH = 6;
 
 /** A point on the XZ ground plane. */
 interface Pt {
@@ -135,10 +138,19 @@ class UnionFind {
   }
 
   find(id: string): string {
-    let root = this.parent.get(id) ?? id;
+    // Two-pass find with FULL path compression: walk to the root collecting
+    // the path, then point every visited node straight at the root. Without
+    // compression the bridge step's O(orphan x nodes) scan multiplies by the
+    // chain depth and dominates the whole derivation (~1.3s on the fixture).
+    const path: string[] = [];
+    let node = id;
+    let root = this.parent.get(node) ?? node;
     while (root !== (this.parent.get(root) ?? root)) {
+      path.push(node);
+      node = root;
       root = this.parent.get(root) ?? root;
     }
+    for (const visited of path) this.parent.set(visited, root);
     return root;
   }
 
@@ -169,6 +181,9 @@ class UnionFind {
  * derivation rules the simulation consumes.
  */
 export function derivePathNetwork(layout: CityLayout): PathNetwork {
+  // The street network is derived ONCE and shared by the sidewalk step and
+  // the road output below — corridors are the geometry both derive from.
+  const street = deriveStreetNetwork(layout);
   const nodes = new Map<string, Pt>();
   const segments: Array<{ a: string; b: string }> = [];
   const seenSegments = new Set<string>();
@@ -225,42 +240,20 @@ export function derivePathNetwork(layout: CityLayout): PathNetwork {
     }
   }
 
-  // ---- 2. Road-side sidewalks: duplicate each road polyline on both sides,
-  // offset perpendicular by (road half width + pavement gap), sampled at the
-  // same step. This is what makes every street walkable on both sides.
-  const roadSideOffset = ROAD_HALF + PAVEMENT_GAP;
-  for (const road of layout.roads) {
+  // ---- 2. Street-side sidewalks: duplicate each corridor centreline on both
+  // sides, offset perpendicular by (half tarmac + kerb + half pavement) — the
+  // middle of the pavement strip. This is what makes every street walkable on
+  // both sides. Corridors are axis-aligned, so the normals are exact.
+  const pavementOffset = STREET_WIDTH / 2 + KERB_WIDTH + PAVEMENT_WIDTH / 2;
+  for (const corridor of street.corridors) {
     for (const side of [-1, 1] as const) {
-      const offsetPoints: Pt[] = [];
-      for (let i = 0; i < road.points.length; i++) {
-        const point = road.points[i];
-        // Perpendicular direction from the previous/next waypoint (the road
-        // is Manhattan-routed, so axis-aligned normals are exact).
-        const prev = road.points[Math.max(0, i - 1)];
-        const next = road.points[Math.min(road.points.length - 1, i + 1)];
-        const dx = next.x - prev.x;
-        const dz = next.z - prev.z;
-        const length = Math.hypot(dx, dz);
-        if (length === 0) {
-          offsetPoints.push(point);
-          continue;
-        }
-        // Perpendicular of (dx, dz) is (-dz, dx); normalize and scale.
-        offsetPoints.push({
-          x: point.x + (-dz / length) * roadSideOffset * side,
-          z: point.z + (dx / length) * roadSideOffset * side,
-        });
-      }
-      // Sample ALONG the offset polyline (not just the chord): each
-      // consecutive waypoint pair becomes an edge, so the sidewalk follows
-      // the Manhattan L-route around corners instead of cutting straight
-      // lines through the block.
-      for (let i = 0; i < offsetPoints.length - 1; i++) {
-        chain(sampleEdge(offsetPoints[i], offsetPoints[i + 1]), addSegment);
-      }
+      // One 2-point chain along the pavement side; sampleEdge spaces the
+      // interior nodes, exactly as the old road sides did.
+      const from = offsetPoint(corridor, corridor.from, side, pavementOffset);
+      const to = offsetPoint(corridor, corridor.to, side, pavementOffset);
+      chain(sampleEdge(from, to), addSegment);
     }
   }
-
   // ---- 3. Cross-connections at district corners: join each ring corner to
   // the nearest road-side node (deterministic nearest by distance, then id).
   const allNodeIds = Array.from(nodes.keys());
@@ -288,7 +281,7 @@ export function derivePathNetwork(layout: CityLayout): PathNetwork {
 
   // ---- 3b. Footprint filter (BEFORE connectivity bridging): drop nodes
   // that sit strictly inside a building footprint, along with their segments.
-  // Road-side sidewalks pass buildings closely, so this is a real filter —
+  // Street-side sidewalks pass buildings closely, so this is a real filter —
   // and it must run before bridging so the bridge step sees the final graph.
   const footprints = layout.buildings.map((building) => ({
     minX: building.x - building.w / 2,
@@ -337,8 +330,9 @@ export function derivePathNetwork(layout: CityLayout): PathNetwork {
       for (const idA of group) {
         const pointA = nodeById.get(idA);
         if (pointA === undefined) continue;
+        const rootA = uf.find(idA); // loop-invariant: computed once per idA
         for (const [idB, pointB] of nodes) {
-          if (uf.find(idB) === uf.find(idA)) continue;
+          if (uf.find(idB) === rootA) continue;
           const dist = Math.hypot(pointB.x - pointA.x, pointB.z - pointA.z);
           if (dist < bestDist || (dist === bestDist && idB < (bestB ?? ""))) {
             bestDist = dist;
@@ -362,14 +356,62 @@ export function derivePathNetwork(layout: CityLayout): PathNetwork {
     segments,
   };
 
-  // ---- Roads: mirror the layout's polylines 1:1 with a constant width.
-  const roads: RoadPolyline[] = layout.roads.map((road, index) => ({
-    id: `rd-${road.fromId}→${road.toId}#${index}`,
-    points: road.points.map((point) => ({ x: point.x, z: point.z })),
-    width: ROAD_WIDTH,
+  // ---- Roads: the street corridors, sampled for the sim's road graph.
+  const roads: RoadPolyline[] = street.corridors.map((corridor) => ({
+    id: `st-${corridor.axis}-${round2(corridor.center)}-${round2(corridor.from)}-${round2(corridor.to)}`,
+    points: sampleCorridor(corridor, street.intersections, STREET_NODE_STEP),
+    width: STREET_WIDTH,
   }));
 
   return { sidewalk, roads };
+}
+
+/** One point on the pavement-middle offset line of a corridor, for endpoint
+ * `along` on side `side`. Corridors are axis-aligned, so the normal is exact. */
+function offsetPoint(corridor: StreetCorridor, along: number, side: -1 | 1, distance: number): Pt {
+  const x =
+    corridor.axis === "x"
+      ? corridor.center + side * distance
+      : along;
+  const z =
+    corridor.axis === "x"
+      ? along
+      : corridor.center + side * distance;
+  return { x, z };
+}
+
+/**
+ * Sample one corridor's centreline for the sim's road graph: points every
+ * `step` along [from, to] (both endpoints always included), plus every
+ * intersection lying on the corridor — the same construction
+ * `buildStreetGraph` uses, so crossing corridors share exact coordinates and
+ * the vehicle graph welds at junctions instead of fragmenting into
+ * per-corridor chains.
+ */
+function sampleCorridor(
+  corridor: StreetCorridor,
+  intersections: StreetIntersection[],
+  step: number,
+): Pt[] {
+  const span = corridor.to - corridor.from;
+  const count = Math.max(1, Math.ceil(span / step));
+  const positions: number[] = [];
+  for (let i = 0; i <= count; i++) {
+    positions.push(corridor.from + (span * i) / count);
+  }
+  for (const intersection of intersections) {
+    const across = corridor.axis === "x" ? intersection.x : intersection.z;
+    const along = corridor.axis === "x" ? intersection.z : intersection.x;
+    if (Math.abs(across - corridor.center) > 1e-6) continue;
+    if (along < corridor.from - 1e-6 || along > corridor.to + 1e-6) continue;
+    positions.push(along);
+  }
+  positions.sort((a, b) => a - b);
+  return positions.map((along) =>
+    corridor.axis === "x"
+      ? { x: corridor.center, z: along }
+      : { x: along, z: corridor.center },
+  );
 }
 
 /** Unused import guard — Building is part of the documented public surface. */
