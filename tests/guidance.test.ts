@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  getCachedGuidance,
+  getCachedGuide,
+  getCachedWorkflow,
   guidanceCacheKey,
-  rememberGuidance,
+  rememberGuide,
+  rememberWorkflow,
   resetStoresForTests,
+  storeGraph,
 } from "../lib/llm/graphCache";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -12,31 +15,77 @@ import { beforeAll, afterAll } from "vitest";
 import type { CodeGraph, FileNode } from "../lib/types";
 import { selectKeyFiles } from "../lib/llm/keyFiles";
 import {
-  buildRepoGuidanceUserPrompt,
-  REPO_GUIDANCE_SYSTEM_PROMPT,
-} from "../lib/llm/prompts";
+  GUIDE_SYSTEM_PROMPT,
+  WORKFLOW_SYSTEM_PROMPT,
+  buildGuideUserPrompt,
+  buildWorkflowUserPrompt,
+  renderNumberedSource,
+} from "../lib/llm/guidePrompts";
 import type { KeyFileSelection } from "../lib/llm/keyFiles";
+import {
+  isRepoGuide,
+  isWorkflowDetail,
+  type RepoGuide,
+  type WorkflowDetail,
+  type WorkflowSummary,
+} from "../lib/guidance/types";
 import { isSnapshot, SNAPSHOT_VERSION } from "../lib/snapshot/schema";
 
-describe("guidance cache", () => {
-  it("is repo-state keyed: headSha participates, undefined headSha is its own slot", () => {
-    expect(getCachedGuidance("local:E:/repos/demo", "abc123")).toBeUndefined();
-    rememberGuidance("local:E:/repos/demo", "abc123", "the guide");
-    expect(getCachedGuidance("local:E:/repos/demo", "abc123")).toBe("the guide");
+const GUIDE: RepoGuide = {
+  identity: "A demo repo.",
+  workflows: [],
+  features: [],
+  readingPath: [],
+  dataFlow: "",
+};
+
+const DETAIL: WorkflowDetail = {
+  workflowId: "wf",
+  steps: [{ fileId: "a.ts", title: "t", narration: "n", startLine: 1, endLine: 2 }],
+};
+
+describe("guidance caches", () => {
+  it("guide is repo-state keyed: headSha participates, undefined headSha is its own slot", () => {
+    expect(getCachedGuide("local:E:/repos/demo", "abc123")).toBeUndefined();
+    rememberGuide("local:E:/repos/demo", "abc123", GUIDE);
+    expect(getCachedGuide("local:E:/repos/demo", "abc123")).toBe(GUIDE);
     // new HEAD ⇒ new guide slot
-    expect(getCachedGuidance("local:E:/repos/demo", "def456")).toBeUndefined();
+    expect(getCachedGuide("local:E:/repos/demo", "def456")).toBeUndefined();
     // non-git local folder ⇒ its own slot under headSha "none"
-    rememberGuidance("local:E:/repos/demo", undefined, "nogit guide");
-    expect(guidanceCacheKey("local:E:/repos/demo", undefined)).toBe(
-      "local:E:/repos/demo\u0000none",
-    );
-    expect(getCachedGuidance("local:E:/repos/demo", undefined)).toBe("nogit guide");
+    rememberGuide("local:E:/repos/demo", undefined, { ...GUIDE, identity: "no git" });
+    expect(guidanceCacheKey("local:E:/repos/demo", undefined)).toBe("local:E:/repos/demo\u0000none");
+    expect(getCachedGuide("local:E:/repos/demo", undefined)?.identity).toBe("no git");
   });
 
-  it("resetStoresForTests clears it", () => {
-    rememberGuidance("k", "s", "g");
+  it("workflows are cached per workflow id within a repo state", () => {
+    rememberWorkflow("k", "s", DETAIL);
+    expect(getCachedWorkflow("k", "s", "wf")).toBe(DETAIL);
+    expect(getCachedWorkflow("k", "s", "other")).toBeUndefined();
+    expect(getCachedWorkflow("k", "t", "wf")).toBeUndefined();
+  });
+
+  it("re-analysis (a different graph object for the same repo) drops cached guidance", () => {
+    const first = graph([fileNode("a.ts")], []);
+    first.repoPath = "E:/repos/reanalyzed";
+    const key = "local:E:/repos/reanalyzed";
+    storeGraph(first);
+    rememberGuide(key, "abc123", GUIDE);
+    rememberWorkflow(key, "abc123", DETAIL);
+
+    storeGraph(first); // same object: nothing changed, nothing dropped
+    expect(getCachedGuide(key, "abc123")).toBeDefined();
+
+    storeGraph({ ...first }); // re-analyzed: new object for the same repo
+    expect(getCachedGuide(key, "abc123")).toBeUndefined();
+    expect(getCachedWorkflow(key, "abc123", "wf")).toBeUndefined();
+  });
+
+  it("resetStoresForTests clears them", () => {
+    rememberGuide("k", "s", GUIDE);
+    rememberWorkflow("k", "s", DETAIL);
     resetStoresForTests();
-    expect(getCachedGuidance("k", "s")).toBeUndefined();
+    expect(getCachedGuide("k", "s")).toBeUndefined();
+    expect(getCachedWorkflow("k", "s", "wf")).toBeUndefined();
   });
 });
 
@@ -178,10 +227,10 @@ describe("selectKeyFiles", () => {
 });
 
 /* ------------------------------------------------------------------ *
- * Repo guidance prompts (prompts.ts)
+ * Guide prompts (guidePrompts.ts)
  * ------------------------------------------------------------------ */
 
-describe("repo guidance prompts", () => {
+describe("guide prompts", () => {
   const selection: KeyFileSelection = {
     files: [
       { path: "README.md", contents: "# Demo" },
@@ -190,43 +239,145 @@ describe("repo guidance prompts", () => {
     droppedByBudget: 0,
   };
 
-  it("requires the four numbered sections in plain English", () => {
-    expect(REPO_GUIDANCE_SYSTEM_PROMPT).toContain("plain English");
-    expect(REPO_GUIDANCE_SYSTEM_PROMPT).toContain("1.");
-    expect(REPO_GUIDANCE_SYSTEM_PROMPT).toContain("2.");
-    expect(REPO_GUIDANCE_SYSTEM_PROMPT).toContain("3.");
-    expect(REPO_GUIDANCE_SYSTEM_PROMPT).toContain("4.");
-    expect(REPO_GUIDANCE_SYSTEM_PROMPT.toLowerCase()).toContain("data flow");
+  it("asks for ONE JSON object with all five parts and forbids invented files", () => {
+    for (const part of ["identity", "workflows", "features", "readingPath", "dataFlow"]) {
+      expect(GUIDE_SYSTEM_PROMPT).toContain(`"${part}"`);
+    }
+    expect(GUIDE_SYSTEM_PROMPT).toContain("ONE JSON object");
+    expect(GUIDE_SYSTEM_PROMPT).toContain("FILE INDEX");
+    expect(GUIDE_SYSTEM_PROMPT).toContain("Never invent a path");
   });
 
-  it("embeds repo identity, top-level tree, fan-in leaders, and key files", () => {
+  it("embeds identity, folders, the file index, import links, and key files", () => {
     const g = graph(
       [fileNode("src/one.ts", 30), fileNode("lib/two.ts", 5)],
       [{ from: "src/one.ts", to: "lib/two.ts" }],
     );
-    const prompt = buildRepoGuidanceUserPrompt(g, selection);
+    const prompt = buildGuideUserPrompt(g, selection);
     expect(prompt).toContain("Source: local — E:/repos/demo");
     expect(prompt).toContain("Files: 2 · Total lines of code: 35");
     expect(prompt).toContain("lib (1 files, 5 lines)");
-    expect(prompt).toContain("Most imported (fan-in leaders): lib/two.ts");
+    expect(prompt).toContain("FILE INDEX (2 of 2 files");
+    expect(prompt).toContain("src/one.ts (30 loc, entry)");
+    expect(prompt).toContain("lib/two.ts (5 loc)");
+    expect(prompt).toContain("src/one.ts -> lib/two.ts");
     expect(prompt).toContain("--- README.md");
-    expect(prompt).toContain("# Demo");
-    expect(prompt).toContain("--- src/one.ts");
     expect(prompt).toContain("one-contents");
+  });
+
+  it("keeps test files out of the citable index", () => {
+    const g = graph(
+      [fileNode("src/a.ts"), fileNode("src/b.ts"), fileNode("src/c.ts"), fileNode("tests/a.test.ts")],
+      [{ from: "tests/a.test.ts", to: "src/a.ts" }],
+    );
+    const prompt = buildGuideUserPrompt(g, { files: [], droppedByBudget: 0 });
+    expect(prompt).toContain("FILE INDEX (3 of 4 files");
+    expect(prompt).not.toContain("tests/a.test.ts (");
+  });
+
+  it("keeps tooling dot-directories out of the citable index, unless nothing else exists", () => {
+    const g = graph(
+      [fileNode("src/a.ts"), fileNode("src/b.ts"), fileNode("src/c.ts"), fileNode(".agents/skills/x/app.py")],
+      [],
+    );
+    const prompt = buildGuideUserPrompt(g, { files: [], droppedByBudget: 0 });
+    expect(prompt).toContain("FILE INDEX (3 of 4 files");
+    expect(prompt).not.toContain(".agents/skills/x/app.py (");
+
+    // A repo that is ONLY tooling-shaped still gets an index rather than an empty one.
+    const only = graph([fileNode(".tools/a.ts"), fileNode(".tools/b.ts")], []);
+    expect(buildGuideUserPrompt(only, { files: [], droppedByBudget: 0 })).toContain("FILE INDEX (2 of 2 files");
   });
 
   it("embeds a skim notice when the graph has no edges and no functions", () => {
     const g = graph([fileNode("src/one.ts")], []);
-    const prompt = buildRepoGuidanceUserPrompt(g, { files: [], droppedByBudget: 0 });
+    const prompt = buildGuideUserPrompt(g, { files: [], droppedByBudget: 0 });
     expect(prompt).toContain("summarized mode");
   });
 });
 
 /* ------------------------------------------------------------------ *
- * Snapshot repoGuidance field (schema.ts)
+ * Workflow prompts (guidePrompts.ts)
  * ------------------------------------------------------------------ */
 
-describe("snapshot repoGuidance field", () => {
+describe("workflow prompts", () => {
+  const lines = Array.from({ length: 300 }, (_, i) => `const line${i + 1} = ${i + 1};`);
+
+  it("system prompt demands numbered-line citations and bans invented files", () => {
+    expect(WORKFLOW_SYSTEM_PROMPT).toContain("startLine");
+    expect(WORKFLOW_SYSTEM_PROMPT).toContain("N| code");
+    expect(WORKFLOW_SYSTEM_PROMPT).toContain("Never invent files");
+  });
+
+  it("renderNumberedSource shows a small file whole, with right-aligned line numbers", () => {
+    const out = renderNumberedSource(["a", "b", "c"], [], 1000);
+    expect(out).toBe("1| a\n2| b\n3| c");
+  });
+
+  it("windows a big file around the focus range, keeping original numbers and marking gaps", () => {
+    const out = renderNumberedSource(lines, [{ startLine: 200, endLine: 205 }], 2_500);
+    expect(out).toContain("  1| const line1 = 1;"); // head window
+    expect(out).toContain("200| const line200 = 200;"); // focus
+    expect(out).toContain("(lines 41–196 omitted)"); // gap between the 40-line head and the focus window (197–208)
+    expect(out).not.toContain("const line100 = 100;"); // the gap really is skipped
+  });
+
+  it("with no focus, shows the file from the top until the budget runs out", () => {
+    const out = renderNumberedSource(lines, [], 400);
+    expect(out).toContain("  1| const line1 = 1;");
+    expect(out).toContain("truncated after line");
+    expect(out).not.toContain("const line300");
+  });
+
+  it("buildWorkflowUserPrompt lists the route, import links, and the numbered source", () => {
+    const fn = { name: "handle", startLine: 2, endLine: 3 };
+    const route = { ...fileNode("app/route.ts", 4), functions: [fn] };
+    const lib = fileNode("lib/work.ts", 3);
+    const g: CodeGraph = {
+      files: [route, lib],
+      edges: [{ fromId: "app/route.ts", toId: "lib/work.ts", symbol: "doWork" }],
+      headSha: "abc123",
+      repoPath: "E:/repos/demo",
+      source: "local",
+    };
+    const workflow: WorkflowSummary = {
+      id: "run-it",
+      title: "Run it",
+      goal: "Do the work",
+      trigger: "A request arrives",
+      route: [{ fileId: "app/route.ts", symbol: "handle" }, { fileId: "lib/work.ts" }],
+    };
+    const sources = new Map<string, string[]>([
+      ["app/route.ts", ["import x", "export function handle() {", "}", ""]],
+      ["lib/work.ts", ["a", "b", "c"]],
+    ]);
+    const prompt = buildWorkflowUserPrompt(g, workflow, sources);
+    expect(prompt).toContain("WORKFLOW: Run it");
+    expect(prompt).toContain("1. app/route.ts :: handle");
+    expect(prompt).toContain("2. lib/work.ts");
+    expect(prompt).toContain("app/route.ts -> lib/work.ts{doWork}");
+    expect(prompt).toContain("=== app/route.ts (typescript, 4 lines) — functions: handle (lines 2-3)");
+    expect(prompt).toContain("2| export function handle() {");
+  });
+
+  it("tells the model when a route file's source is unavailable", () => {
+    const g = graph([fileNode("a.ts"), fileNode("b.ts")], []);
+    const workflow: WorkflowSummary = {
+      id: "w",
+      title: "W",
+      goal: "g",
+      trigger: "t",
+      route: [{ fileId: "a.ts" }, { fileId: "b.ts" }],
+    };
+    expect(buildWorkflowUserPrompt(g, workflow, new Map())).toContain("source unavailable");
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Snapshot guide fields (schema.ts) + shape guards (types.ts)
+ * ------------------------------------------------------------------ */
+
+describe("snapshot guide fields", () => {
   function baseSnapshot(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
       version: SNAPSHOT_VERSION,
@@ -244,15 +395,27 @@ describe("snapshot repoGuidance field", () => {
     };
   }
 
-  it("accepts old snapshots without repoGuidance (backward compat)", () => {
+  it("accepts old snapshots without guide fields (backward compat)", () => {
     expect(isSnapshot(baseSnapshot())).toBe(true);
   });
 
-  it("accepts a string repoGuidance", () => {
-    expect(isSnapshot(baseSnapshot({ repoGuidance: "the guide" }))).toBe(true);
+  it("still loads snapshots carrying the legacy plain-text repoGuidance field", () => {
+    expect(isSnapshot(baseSnapshot({ repoGuidance: "old guide text" }))).toBe(true);
   });
 
-  it("rejects a non-string repoGuidance", () => {
-    expect(isSnapshot(baseSnapshot({ repoGuidance: 42 }))).toBe(false);
+  it("accepts snapshots carrying a structured guide and traced workflows", () => {
+    expect(isSnapshot(baseSnapshot({ repoGuide: GUIDE, workflowDetails: { wf: DETAIL } }))).toBe(true);
+  });
+
+  it("isRepoGuide / isWorkflowDetail accept real shapes and reject malformed ones", () => {
+    expect(isRepoGuide(GUIDE)).toBe(true);
+    expect(isRepoGuide("a plain string")).toBe(false);
+    expect(isRepoGuide({ ...GUIDE, workflows: [{ id: "x" }] })).toBe(false);
+    expect(isWorkflowDetail(DETAIL)).toBe(true);
+    expect(isWorkflowDetail({ workflowId: "wf", steps: [] })).toBe(false);
+    expect(isWorkflowDetail({ ...DETAIL, steps: [{ ...DETAIL.steps[0], startLine: "1" }] })).toBe(false);
+    expect(
+      isWorkflowDetail({ ...DETAIL, steps: [{ ...DETAIL.steps[0], excerpt: { startLine: 1, lines: [1] } }] }),
+    ).toBe(false);
   });
 });

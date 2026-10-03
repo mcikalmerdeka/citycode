@@ -146,6 +146,23 @@ export const COMPARE_ACCENTS = {
 } as const;
 
 /**
+ * Guided-demo overlay palette (Repo Guidance). The demo is a transient layer
+ * over the city, so it gets its own indigo — distinct from every compare
+ * accent above and from the amber selection highlight.
+ */
+export const FLOW_COLORS = {
+  /** Route lines, the active building's glow, the packet core. */
+  route: "#5B5BD6",
+  /** Packet halo and trail. */
+  glow: "#8E8EF2",
+  /** Stops the demo has already passed. */
+  visited: "#A5A5E6",
+  /** Stops still ahead. */
+  upcoming: "#B4B4C6",
+  badgeText: "#FFFFFF",
+} as const;
+
+/**
  * Shader uniform names the scene materials understand. A tuple (not an
  * object) so renderers can iterate it in a fixed order.
  */

@@ -30,9 +30,11 @@ import { CompareBar } from "@/components/ui/CompareBar";
 import { FileTree } from "@/components/ui/FileTree";
 import { ImportForm, type AnalyzeResponse } from "@/components/ui/ImportForm";
 import { InspectPanel } from "@/components/ui/InspectPanel";
+import { DemoPlayer } from "@/components/ui/DemoPlayer";
 import { GuidanceModal } from "@/components/ui/GuidanceModal";
 import { StatsBar } from "@/components/ui/StatsBar";
 import { ViewControls } from "@/components/ui/ViewControls";
+import { useFlowStore } from "@/lib/guidance/flowStore";
 import { useCityStore } from "@/lib/store";
 
 const CityScene = dynamic(
@@ -111,6 +113,7 @@ export default function Home() {
   const compareMode = useCityStore((state) => state.compareMode);
   const requestFocus = useCityStore((state) => state.requestFocus);
   const selectedId = useCityStore((state) => state.selectedId);
+  const flowActive = useFlowStore((state) => state.flow !== null);
   const [guidanceOpen, setGuidanceOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(true);
   const [treeOpen, setTreeOpen] = useState(false);
@@ -119,6 +122,8 @@ export default function Home() {
     (data: AnalyzeResponse) => {
       setResult(data);
       select(null);
+      // A demo belongs to the city it was traced in — never carry it over.
+      useFlowStore.getState().stop();
       // A fresh city: collapse the import panel, open the tree drawer.
       setImportOpen(false);
       setTreeOpen(true);
@@ -261,8 +266,8 @@ export default function Home() {
           )}
         </div>
 
-        {/* Right edge: FileTree drawer */}
-        {hasResult && (
+        {/* Right edge: FileTree drawer (steps aside while a demo shows its code) */}
+        {hasResult && !flowActive && (
           <div className="absolute right-3.5 top-1/2 z-20 -translate-y-1/2">
             {treeOpen ? (
               <section aria-label="Working directory" className="panel flex max-h-[62vh] w-72 flex-col overflow-hidden">
@@ -290,7 +295,7 @@ export default function Home() {
         {hasResult && <Legend />}
 
         {/* Center: compact inspector card for the selected building */}
-        {hasResult && selectedId !== null && (
+        {hasResult && selectedId !== null && !flowActive && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
             <div className="panel pointer-events-auto max-h-[60vh] w-80 overflow-y-auto">
               <InspectPanel graph={result.graph} repoKey={result.repoKey} />
@@ -298,8 +303,13 @@ export default function Home() {
           </div>
         )}
 
+        {/* Guided demo: player (bottom-center) + code viewer (right) replace the dock */}
+        {hasResult && flowActive && (
+          <DemoPlayer onOpenGuide={() => setGuidanceOpen(true)} keysEnabled={!guidanceOpen} />
+        )}
+
         {/* Bottom-center dock: compare mode tabs (+ summary) and quick jumps */}
-        {hasResult && (
+        {hasResult && !flowActive && (
           <nav aria-label="Compare and quick actions" className="dock">
             <CompareBar
               repoKey={result.repoKey}

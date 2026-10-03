@@ -10,6 +10,7 @@ Local-first and single-user: one Next.js app, no database, no cloud. Everything 
 - **Previous commit compare** (HEAD vs. HEAD~1) — modified files become construction sites with a rotating crane, deleted files become rubble, renames draw a cyan moved-marker line from the old spot to the new one, and everything that imports a changed file lights up in red (the blast radius). One LLM-generated plain-English summary of the commit appears alongside.
 - **About to commit compare** (HEAD vs. working directory) — the same treatment for uncommitted changes: modified, staged, untracked (rendered as freshly-poured foundations), renamed, and deleted files, with a change summary.
 - **Click-to-inspect** — click any building for its path, LOC, functions, importers and importees, plus a plain-English explanation of what the file does, generated once per file and cached.
+- **Repo Guidance** — an LLM-written onboarding guide that opens with *what you can do with the app*: pick a workflow and a guided demo plays in the city (see below).
 - **Instant snapshot reload** — every analyzed repo state is saved as a JSON snapshot; reopening it skips clone, parse and LLM calls entirely.
 - **Languages** — TypeScript/TSX and Python.
 
@@ -49,6 +50,16 @@ Open [http://localhost:3000](http://localhost:3000), then paste either a local f
 
 **Inspect panel** — click any building to see its path, LOC, language, function list, importers and importees, plus the "What does this file do?" explanation (first click generates it, repeat clicks are served from cache with a `cached` badge).
 
+## Repo Guidance
+
+Click **Repo Guidance** (needs `OPENAI_API_KEY`). The guide has:
+
+- **What this repo is**, **Main features**, an **Ordered reading path** and a **Data flow** overview. Every file mentioned is a chip — click it to close the guide and fly the camera to that building.
+- **Guided demos** — concrete things you can do with the app (e.g. "import a GitHub repository"). Picking one traces it through the real source (one extra LLM call, the first time only), then plays it in the city: a data packet rides the streets between the buildings involved, each stop is numbered, the camera follows, and a docked player shows the narration, what data is handed on, and the **actual lines of code** that are active at that step. Controls: play/pause, previous/next, click the timeline to jump, speed, follow-camera and code toggles. Keyboard: `Space` play/pause, `←`/`→` step, `Esc` exit.
+- **Start the tour** on the reading path walks the same player through the recommended files in order.
+
+The model's output is never trusted blindly: every file, function and line range is checked against the parsed graph (invented files are dropped; line ranges snap to real function spans), and code excerpts come straight from your files. The guide and each traced demo are cached in memory and in the snapshot, so reopening costs nothing.
+
 ## Snapshots
 
 Every successful analysis is auto-saved to `.citycode-cache/snapshots/` (gitignored), one JSON file per repo state. Reopening the same repo state loads instantly: no re-clone, no re-parse, no repeat LLM calls, and previously generated explanations persist. Corrupt or truncated snapshot files are treated as cache misses and silently regenerated. Snapshots older than 7 days are swept (best-effort).
@@ -80,5 +91,6 @@ Project layout:
 - `lib/city/` — graph → deterministic city layout (squarified treemap)
 - `lib/diff/` — diff → change classification + blast radius
 - `lib/llm/` — OpenAI client, prompts, in-memory caches
+- `lib/guidance/` — Repo Guidance: guide data model, grounding of model output against the graph, demo timeline/playback store
 - `lib/snapshot/` — JSON snapshot persistence under `.citycode-cache/snapshots/`
 - `lib/progress.ts` — NDJSON stage-feedback contract for `/api/analyze`

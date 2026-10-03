@@ -48,6 +48,7 @@ import { Roads } from "./Roads";
 import { Simulation } from "./Simulation";
 import { DioramaBase } from "./DioramaBase";
 import { Environment } from "./Environment";
+import { FlowOverlay } from "./FlowOverlay";
 import {
   DEFAULT_ORBIT,
   ELEVATION_MAX,
@@ -136,6 +137,7 @@ function CameraRig({ buildings }: { buildings: Building[] }) {
   const gl = useThree((state) => state.gl);
   const size = useThree((state) => state.size);
   const focusRequest = useCityStore((state) => state.focusRequest);
+  const frameRequest = useCityStore((state) => state.frameRequest);
   const resetViewRequest = useCityStore((state) => state.resetViewRequest);
 
   const byId = useMemo(
@@ -245,6 +247,40 @@ function CameraRig({ buildings }: { buildings: Building[] }) {
       elevation: smooth.current.elevation,
     });
   }, [focusRequest, byId, startTween]);
+
+  // A frameRequest (the guided demo's hop) fits several buildings in view.
+  useEffect(() => {
+    if (frameRequest === null) return;
+    const targets = frameRequest.fileIds
+      .map((id) => byId.get(id))
+      .filter((building): building is Building => building !== undefined);
+    if (targets.length === 0) return;
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    let tallest = 0;
+    for (const building of targets) {
+      minX = Math.min(minX, building.x - building.w / 2);
+      maxX = Math.max(maxX, building.x + building.w / 2);
+      minZ = Math.min(minZ, building.z - building.d / 2);
+      maxZ = Math.max(maxZ, building.z + building.d / 2);
+      tallest = Math.max(tallest, building.h);
+    }
+    // Margin for the panels that float over the stage during a demo.
+    const span = THREE.MathUtils.clamp(
+      Math.max(maxX - minX, maxZ - minZ) * 1.15 + tallest * 0.6 + 44,
+      SPAN_MIN,
+      SPAN_MAX,
+    );
+    startTween({
+      target: { x: (minX + maxX) / 2, y: Math.min(tallest * 0.4, 16), z: (minZ + maxZ) / 2 },
+      span,
+      azimuth: smooth.current.azimuth,
+      elevation: smooth.current.elevation,
+    });
+  }, [frameRequest, byId, startTween]);
 
   // resetViewRequest counter change → tween back to the default overview.
   useEffect(() => {
@@ -472,6 +508,7 @@ export function CityScene({
           {changeSet !== undefined && changeSet !== null && (
             <ChangeOverlays layout={layout} changeSet={changeSet} />
           )}
+          <FlowOverlay buildings={layout.buildings} streets={streets} />
           <CameraRig buildings={layout.buildings} />
         </group>
       </SceneEnvContext.Provider>

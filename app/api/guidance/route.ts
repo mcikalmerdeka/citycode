@@ -1,25 +1,27 @@
 import { NextResponse } from "next/server";
 import { LlmConfigError, getLlmClient } from "@/lib/llm/client";
-import { getCachedGuidance, getStoredGraph, rememberGuidance } from "@/lib/llm/graphCache";
+import { getCachedGuide, getStoredGraph, rememberGuide } from "@/lib/llm/graphCache";
+import { generateRepoGuide } from "@/lib/llm/guidePrompts";
 import { selectKeyFiles } from "@/lib/llm/keyFiles";
-import { generateRepoGuidance } from "@/lib/llm/prompts";
 import { loadSnapshot } from "@/lib/snapshot/load";
-import { saveSnapshot } from "@/lib/snapshot/save";
+import { updateSnapshot } from "@/lib/snapshot/save";
 
 /**
- * POST /api/guidance — the repo-wide LLM guide.
+ * POST /api/guidance — the repo-wide structured guide (phase A).
  *
  * Body: { repoKey }. The graph must have been produced by /api/analyze on
- * this server run (in-memory graph store). The guide is generated at most
- * once per ingested repo state: tier 1 is the warm in-memory cache, tier 2
- * the persisted snapshot (`repoGuidance`), tier 3 the LLM call (key-file
- * selection + chat call) whose result is cached and written back into the
- * snapshot — so reopening the same repo state never re-calls the model.
+ * this server run (in-memory graph store). The guide — identity, workflow
+ * options, features, reading path, data flow — is generated at most once per
+ * ingested repo state: tier 1 is the warm in-memory cache, tier 2 the
+ * persisted snapshot (`repoGuide`), tier 3 the LLM call (key-file selection +
+ * chat call, grounded against the graph) whose result is cached and written
+ * back into the snapshot — so reopening the same repo state never re-calls
+ * the model. Workflow demos are traced lazily by /api/guidance/workflow.
  *
  * Failure mapping (never a plain 500):
  * - 400 malformed body / unknown repoKey
  * - 503 missing LLM configuration (city stays usable; UI banner)
- * - 502 upstream LLM failure
+ * - 502 upstream LLM failure, or a reply with nothing usable in it
  */
 export const runtime = "nodejs";
 
@@ -48,17 +50,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const cachedGuide = getCachedGuidance(repoKey, graph.headSha);
+  const cachedGuide = getCachedGuide(repoKey, graph.headSha);
   if (cachedGuide !== undefined) {
     return NextResponse.json({ guide: cachedGuide, cached: true }, { status: 200 });
   }
 
   // Persisted tier: a guide from a previous server run. (Missing/corrupt
-  // snapshot → undefined → normal LLM path; never crashes.)
-  const snapshot = loadSnapshot(repoKey, graph.headSha);
-  const persisted = snapshot?.repoGuidance;
-  if (persisted !== undefined && persisted.length > 0) {
-    rememberGuidance(repoKey, graph.headSha, persisted);
+  // snapshot, or a malformed guide inside one → undefined → normal LLM path.)
+  const persisted = loadSnapshot(repoKey, graph.headSha)?.repoGuide;
+  if (persisted !== undefined) {
+    rememberGuide(repoKey, graph.headSha, persisted);
     return NextResponse.json({ guide: persisted, cached: true }, { status: 200 });
   }
 
@@ -67,15 +68,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     // readable LlmConfigError message (503, degrades — no crash).
     getLlmClient();
     const keyFiles = await selectKeyFiles(graph);
-    const { guide } = await generateRepoGuidance(graph, keyFiles);
-    rememberGuidance(repoKey, graph.headSha, guide);
-    // Persist into the snapshot (best-effort, atomic — see save.ts). One
-    // guide per snapshot file; snapshot keys already encode the repo state,
-    // so the slot is simply replaced.
-    if (snapshot !== undefined) {
-      snapshot.repoGuidance = guide;
-      saveSnapshot(snapshot, repoKey, graph.headSha);
-    }
+    const { guide } = await generateRepoGuide(graph, keyFiles);
+    rememberGuide(repoKey, graph.headSha, guide);
+    // Persist (best-effort, atomic — see save.ts). updateSnapshot re-reads the
+    // file, so explanations saved during the minute the model spent thinking
+    // are not overwritten. A new guide replaces any traced workflows, which
+    // belong to the previous guide's workflow ids.
+    updateSnapshot(repoKey, graph.headSha, (snapshot) => {
+      snapshot.repoGuide = guide;
+      delete snapshot.workflowDetails;
+    });
     return NextResponse.json({ guide, cached: false }, { status: 200 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "CityCode: repo guidance failed";

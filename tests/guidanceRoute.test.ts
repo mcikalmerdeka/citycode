@@ -1,31 +1,61 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { POST } from "../app/api/guidance/route";
-import { storeGraph, resetStoresForTests } from "../lib/llm/graphCache";
+import { POST as guidePost } from "../app/api/guidance/route";
+import { POST as workflowPost } from "../app/api/guidance/workflow/route";
+import { rememberGuide, resetStoresForTests, storeGraph } from "../lib/llm/graphCache";
 import { resetLlmClientCacheForTests } from "../lib/llm/client";
+import type { RepoGuide, WorkflowDetail } from "../lib/guidance/types";
 import type { CodeGraph } from "../lib/types";
 
-/* Mock only the network boundary: generateRepoGuidance returns canned text
- * or throws, so route tests are deterministic and offline. */
-vi.mock("../lib/llm/prompts", () => ({
-  generateRepoGuidance: vi.fn(async () => ({ guide: "generated guide" })),
+/* Mock only the network boundary: the two LLM calls return canned data or
+ * throw, so route tests are deterministic and offline. */
+const GUIDE: RepoGuide = {
+  identity: "generated identity",
+  workflows: [
+    {
+      id: "run-it",
+      title: "Run it",
+      goal: "Do the thing",
+      trigger: "A request arrives",
+      route: [{ fileId: "src/a.ts" }, { fileId: "src/b.ts" }],
+    },
+  ],
+  features: [],
+  readingPath: [],
+  dataFlow: "",
+};
+
+const DETAIL: WorkflowDetail = {
+  workflowId: "run-it",
+  steps: [
+    { fileId: "src/a.ts", title: "Receive", narration: "It arrives.", startLine: 1, endLine: 2 },
+    { fileId: "src/b.ts", title: "Handle", narration: "It is handled.", startLine: 1, endLine: 1 },
+  ],
+};
+
+vi.mock("../lib/llm/guidePrompts", () => ({
+  generateRepoGuide: vi.fn(async () => ({ guide: GUIDE })),
+  traceWorkflow: vi.fn(async () => ({ detail: DETAIL })),
 }));
 
-import { generateRepoGuidance } from "../lib/llm/prompts";
-const generate = vi.mocked(generateRepoGuidance);
+import { generateRepoGuide, traceWorkflow } from "../lib/llm/guidePrompts";
+const generate = vi.mocked(generateRepoGuide);
+const trace = vi.mocked(traceWorkflow);
+
+function file(id: string) {
+  return {
+    id,
+    path: id,
+    loc: 3,
+    language: "typescript" as const,
+    functions: [],
+    externalImports: [],
+    unresolvedImports: [],
+  };
+}
 
 function routeGraph(repoPath: string): CodeGraph {
   return {
-    files: [
-      {
-        id: "src/a.ts",
-        path: "src/a.ts",
-        loc: 3,
-        language: "typescript",
-        functions: [],
-        externalImports: [],
-        unresolvedImports: [],
-      },
-    ],
+    files: [file("src/a.ts"), file("src/b.ts")],
     edges: [],
     headSha: "abc123",
     repoPath,
@@ -41,55 +71,61 @@ function request(body: unknown): Request {
   });
 }
 
+/** Run `fn` with an OPENAI_API_KEY configured, restoring the environment after. */
+async function withKey(fn: () => Promise<void>): Promise<void> {
+  process.env.OPENAI_API_KEY = "test-key";
+  resetLlmClientCacheForTests();
+  try {
+    await fn();
+  } finally {
+    delete process.env.OPENAI_API_KEY;
+    resetLlmClientCacheForTests();
+  }
+}
+
 beforeEach(() => {
   resetStoresForTests();
-  generate.mockImplementation(async () => ({ guide: "generated guide" }));
+  generate.mockImplementation(async () => ({ guide: GUIDE }));
+  trace.mockImplementation(async () => ({ detail: DETAIL }));
 });
 
 afterEach(() => {
   resetStoresForTests();
-  vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 describe("POST /api/guidance", () => {
   it("400 on malformed JSON", async () => {
-    const response = await POST(new Request("http://localhost/x", { method: "POST", body: "{oops" }));
+    const response = await guidePost(new Request("http://localhost/x", { method: "POST", body: "{oops" }));
     expect(response.status).toBe(400);
   });
 
   it("400 on missing repoKey and on unknown repoKey", async () => {
-    expect((await POST(request({}))).status).toBe(400);
-    expect((await POST(request({ repoKey: "local:E:/nowhere" }))).status).toBe(400);
+    expect((await guidePost(request({}))).status).toBe(400);
+    expect((await guidePost(request({ repoKey: "local:E:/nowhere" }))).status).toBe(400);
   });
 
-  it("tier 1: warm guidance cache answers cached=true with no LLM call", async () => {
-    const graph = routeGraph("E:/repos/w");
-    storeGraph(graph);
+  it("tier 1: a second request is served from the warm cache with no LLM call", async () => {
+    storeGraph(routeGraph("E:/repos/w"));
     const key = "local:E:/repos/w";
-    // First request generates (tier 3), so the LLM must be configured.
-    process.env.OPENAI_API_KEY = "test-key";
-    resetLlmClientCacheForTests();
-    try {
-      const first = await POST(request({ repoKey: key }));
+    await withKey(async () => {
+      const first = await guidePost(request({ repoKey: key }));
       expect(first.status).toBe(200);
-      expect(await first.json()).toEqual({ guide: "generated guide", cached: false });
+      expect(await first.json()).toEqual({ guide: GUIDE, cached: false });
 
-      const second = await POST(request({ repoKey: key }));
-      expect(await second.json()).toEqual({ guide: "generated guide", cached: true });
+      const second = await guidePost(request({ repoKey: key }));
+      expect(await second.json()).toEqual({ guide: GUIDE, cached: true });
       expect(generate).toHaveBeenCalledOnce();
-    } finally {
-      delete process.env.OPENAI_API_KEY;
-      resetLlmClientCacheForTests();
-    }
+    });
   });
 
-  it("503 when LLM is unconfigured", async () => {
+  it("503 when the LLM is unconfigured", async () => {
     storeGraph(routeGraph("E:/repos/nl"));
     const previousKey = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     resetLlmClientCacheForTests();
     try {
-      const response = await POST(request({ repoKey: "local:E:/repos/nl" }));
+      const response = await guidePost(request({ repoKey: "local:E:/repos/nl" }));
       expect(response.status).toBe(503);
       const body = (await response.json()) as { error: string };
       expect(body.error).toContain("OPENAI_API_KEY");
@@ -99,35 +135,94 @@ describe("POST /api/guidance", () => {
     }
   });
 
-  it("502 when the LLM call throws", async () => {
+  it("502 when the LLM call (or grounding) throws", async () => {
     storeGraph(routeGraph("E:/repos/f"));
-    process.env.OPENAI_API_KEY = "test-key";
-    resetLlmClientCacheForTests();
     generate.mockImplementation(async () => {
-      throw new Error("CityCode: the model returned an empty repository guide");
+      throw new Error("CityCode: the model returned an unusable repository guide — try again");
     });
-    try {
-      const response = await POST(request({ repoKey: "local:E:/repos/f" }));
+    await withKey(async () => {
+      const response = await guidePost(request({ repoKey: "local:E:/repos/f" }));
       expect(response.status).toBe(502);
+      expect(((await response.json()) as { error: string }).error).toContain("unusable");
+    });
+  });
+
+  it("tier 3 with an unreadable repoPath: key-file selection is fail-soft, the route still answers", async () => {
+    storeGraph(routeGraph("E:/repos/does-not-exist"));
+    await withKey(async () => {
+      const response = await guidePost(request({ repoKey: "local:E:/repos/does-not-exist" }));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ guide: GUIDE, cached: false });
+    });
+  });
+});
+
+describe("POST /api/guidance/workflow", () => {
+  const key = "local:E:/repos/wf";
+
+  function seedGuide(): void {
+    storeGraph(routeGraph("E:/repos/wf"));
+    rememberGuide(key, "abc123", GUIDE);
+  }
+
+  it("400 on malformed JSON and on missing fields", async () => {
+    expect((await workflowPost(new Request("http://localhost/x", { method: "POST", body: "{oops" }))).status).toBe(400);
+    expect((await workflowPost(request({ workflowId: "run-it" }))).status).toBe(400);
+    expect((await workflowPost(request({ repoKey: key }))).status).toBe(400);
+  });
+
+  it("400 on an unknown repoKey", async () => {
+    expect((await workflowPost(request({ repoKey: "local:E:/nowhere", workflowId: "run-it" }))).status).toBe(400);
+  });
+
+  it("400 when the workflow is not in the guide this server holds", async () => {
+    seedGuide();
+    const response = await workflowPost(request({ repoKey: key, workflowId: "made-up" }));
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toContain("unknown workflow");
+    expect(trace).not.toHaveBeenCalled();
+  });
+
+  it("400 when no guide exists yet for the repo", async () => {
+    storeGraph(routeGraph("E:/repos/wf"));
+    expect((await workflowPost(request({ repoKey: key, workflowId: "run-it" }))).status).toBe(400);
+  });
+
+  it("traces once, then serves the warm cache (cached=true, no second LLM call)", async () => {
+    seedGuide();
+    await withKey(async () => {
+      const first = await workflowPost(request({ repoKey: key, workflowId: "run-it" }));
+      expect(first.status).toBe(200);
+      expect(await first.json()).toEqual({ detail: DETAIL, cached: false });
+
+      const second = await workflowPost(request({ repoKey: key, workflowId: "run-it" }));
+      expect(await second.json()).toEqual({ detail: DETAIL, cached: true });
+      expect(trace).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("503 when the LLM is unconfigured", async () => {
+    seedGuide();
+    const previousKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    resetLlmClientCacheForTests();
+    try {
+      const response = await workflowPost(request({ repoKey: key, workflowId: "run-it" }));
+      expect(response.status).toBe(503);
     } finally {
-      delete process.env.OPENAI_API_KEY;
+      if (previousKey !== undefined) process.env.OPENAI_API_KEY = previousKey;
       resetLlmClientCacheForTests();
     }
   });
 
-  it("tier 3 with an unreadable repoPath: keyFiles is fail-soft, route still answers", async () => {
-    // repoPath never exists on disk — selectKeyFiles catches every read
-    // failure and returns an empty selection; the route must still answer.
-    storeGraph(routeGraph("E:/repos/does-not-exist"));
-    process.env.OPENAI_API_KEY = "test-key";
-    resetLlmClientCacheForTests();
-    try {
-      const response = await POST(request({ repoKey: "local:E:/repos/does-not-exist" }));
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ guide: "generated guide", cached: false });
-    } finally {
-      delete process.env.OPENAI_API_KEY;
-      resetLlmClientCacheForTests();
-    }
+  it("502 when the trace fails", async () => {
+    seedGuide();
+    trace.mockImplementation(async () => {
+      throw new Error("CityCode: the model returned an unusable workflow trace — try again");
+    });
+    await withKey(async () => {
+      const response = await workflowPost(request({ repoKey: key, workflowId: "run-it" }));
+      expect(response.status).toBe(502);
+    });
   });
 });

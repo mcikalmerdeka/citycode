@@ -15,6 +15,7 @@
  */
 
 import type { CityLayout } from "../city/layout";
+import type { RepoGuide, WorkflowDetail } from "../guidance/types";
 import type { BuildWarning } from "../parser/buildGraph";
 import type { CodeGraph, GraphSource } from "../types";
 
@@ -82,11 +83,17 @@ export interface Snapshot {
   /** Persisted one-call compare summaries, slotted by compare state. */
   compareSummaries: Record<CompareSummarySlot, string>;
   /**
-   * Whole-repo guidance text (generated once per repo state by
-   * /api/guidance; reopened states serve it from the snapshot). Optional —
-   * pre-guidance snapshots simply omit it, exactly like `skim`.
+   * Structured repo guide (generated once per repo state by /api/guidance;
+   * reopened states serve it from the snapshot). Optional — older snapshots
+   * simply omit it, exactly like `skim`. Validated by load.ts, which drops
+   * (never rejects the snapshot over) a malformed guide.
    */
-  repoGuidance?: string;
+  repoGuide?: RepoGuide;
+  /**
+   * Traced workflows by workflow id (generated lazily by
+   * /api/guidance/workflow). Same optional/validated contract as `repoGuide`.
+   */
+  workflowDetails?: Record<string, WorkflowDetail>;
   /**
    * True when the captured graph is a Phase 7 skim build (size guard: no
    * per-file functions, no edges). Optional — pre-Phase-7 snapshots simply
@@ -136,6 +143,5 @@ export function isSnapshot(value: unknown): value is Snapshot {
     return false;
   }
   if (value.skim !== undefined && typeof value.skim !== "boolean") return false;
-  if (value.repoGuidance !== undefined && !isStr(value.repoGuidance)) return false;
   return isStr(value.createdAt) && !Number.isNaN(Date.parse(value.createdAt));
 }

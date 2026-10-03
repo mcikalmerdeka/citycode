@@ -44,6 +44,15 @@ export interface FocusRequest {
   nonce: number;
 }
 
+/**
+ * A request for the camera to frame SEVERAL buildings at once (the guided
+ * demo frames the two ends of a hop); nonce forces re-fire.
+ */
+export interface FrameRequest {
+  fileIds: string[];
+  nonce: number;
+}
+
 interface CityState {
   /** {@link import("./types").FileNode.id} of the selected building, or null. */
   selectedId: string | null;
@@ -55,6 +64,8 @@ interface CityState {
   hoveredId: string | null;
   /** Latest camera fly-to request, or null. Consumed by the scene CameraRig. */
   focusRequest: FocusRequest | null;
+  /** Latest "frame these buildings" request, or null. Consumed by the CameraRig. */
+  frameRequest: FrameRequest | null;
   /** Ambient time of day for the scene. */
   timeOfDay: DayPhase;
   /** Ambient weather for the scene. */
@@ -68,6 +79,7 @@ interface CityState {
   toggleLabels: () => void;
   setHovered: (id: string | null) => void;
   requestFocus: (fileId: string) => void;
+  requestFrame: (fileIds: string[]) => void;
   setTimeOfDay: (p: DayPhase) => void;
   setWeather: (w: Weather) => void;
   toggleSim: () => void;
@@ -80,6 +92,7 @@ export const useCityStore = create<CityState>((set, get) => ({
   showLabels: false,
   hoveredId: null,
   focusRequest: null,
+  frameRequest: null,
   timeOfDay: "noon",
   weather: "clear",
   simEnabled: true,
@@ -94,6 +107,8 @@ export const useCityStore = create<CityState>((set, get) => ({
   },
   requestFocus: (fileId) =>
     set({ focusRequest: { fileId, nonce: (get().focusRequest?.nonce ?? 0) + 1 } }),
+  requestFrame: (fileIds) =>
+    set({ frameRequest: { fileIds, nonce: (get().frameRequest?.nonce ?? 0) + 1 } }),
   setTimeOfDay: (p) => set({ timeOfDay: p }),
   setWeather: (w) => set({ weather: w }),
   toggleSim: () => set((state) => ({ simEnabled: !state.simEnabled })),
