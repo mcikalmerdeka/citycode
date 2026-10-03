@@ -14,13 +14,39 @@ import type { CityLayout } from "../city/layout";
 import type { BuildWarning } from "../parser/buildGraph";
 import type { CommitDiff } from "../git/diff";
 import type { WorkdirDiff } from "../git/workdir";
+import type { RepoGuide, WorkflowDetail } from "../guidance/types";
 import { computeRepoKey } from "../repoKey";
 
 const graphStore = new Map<string, CodeGraph>();
 
-/** Remember the graph for a just-analyzed repo (replaces any stale entry). */
+/* Repo-guidance caches — declared up here because storeGraph invalidates them. */
+const guideCache = new Map<string, RepoGuide>();
+const workflowCache = new Map<string, WorkflowDetail>();
+
+/**
+ * Forget every guide/workflow cached for a repo. A guide embeds line-numbered
+ * excerpts, so it must not outlive the graph it was generated from.
+ */
+function dropGuidanceFor(repoKey: string): void {
+  const prefix = `${repoKey}\u0000`;
+  for (const cache of [guideCache, workflowCache]) {
+    for (const key of [...cache.keys()]) {
+      if (key.startsWith(prefix)) cache.delete(key);
+    }
+  }
+}
+
+/**
+ * Remember the graph for a just-analyzed repo (replaces any stale entry).
+ * A different graph object for an already-known repo means it was re-analyzed
+ * (edited files, new commit), so its cached guidance is dropped; the
+ * snapshot tier then re-serves it only if the snapshot itself survived.
+ */
 export function storeGraph(graph: CodeGraph): void {
-  graphStore.set(computeRepoKey(graph), graph);
+  const repoKey = computeRepoKey(graph);
+  const previous = graphStore.get(repoKey);
+  if (previous !== undefined && previous !== graph) dropGuidanceFor(repoKey);
+  graphStore.set(repoKey, graph);
 }
 
 /** Fetch the graph previously stored by /api/analyze, if this server run built it. */
@@ -96,29 +122,46 @@ export function getCompareSummary(repoKey: string, headSha: string | undefined):
   return compareSummaryCache.get(compareSummaryKey(repoKey, headSha));
 }
 
-const guidanceCache = new Map<string, string>();
-
 /**
  * Repo-guidance cache key: (repoKey, headSha) — headSha "none" when
- * undefined. Deliberately the same granularity as compareSummaryCache: one
- * guide per ingested repo state. Known accepted bound (see spec): for
- * non-git local folders headSha is always "none", so edited-but-uncommitted
- * state keeps its old guide in this warm tier-1 map until the server
- * process restarts — the persisted tier self-corrects via the snapshot
- * fingerprint check in load.ts.
+ * undefined. Same granularity as compareSummaryCache: one guide per ingested
+ * repo state. Re-analysis of the same repo drops the entry (see storeGraph),
+ * so even non-git folders (headSha always "none") never keep a stale guide.
  */
 export function guidanceCacheKey(repoKey: string, headSha: string | undefined): string {
   return `${repoKey}\u0000${headSha ?? "none"}`;
 }
 
-/** Remember a freshly generated repo guidance text. */
-export function rememberGuidance(repoKey: string, headSha: string | undefined, guide: string): void {
-  guidanceCache.set(guidanceCacheKey(repoKey, headSha), guide);
+/** Remember a freshly generated (or snapshot-loaded) repo guide. */
+export function rememberGuide(repoKey: string, headSha: string | undefined, guide: RepoGuide): void {
+  guideCache.set(guidanceCacheKey(repoKey, headSha), guide);
 }
 
-/** Get a cached repo guidance text, or undefined. */
-export function getCachedGuidance(repoKey: string, headSha: string | undefined): string | undefined {
-  return guidanceCache.get(guidanceCacheKey(repoKey, headSha));
+/** Get a cached repo guide, or undefined. */
+export function getCachedGuide(repoKey: string, headSha: string | undefined): RepoGuide | undefined {
+  return guideCache.get(guidanceCacheKey(repoKey, headSha));
+}
+
+function workflowCacheKey(repoKey: string, headSha: string | undefined, workflowId: string): string {
+  return `${guidanceCacheKey(repoKey, headSha)}\u0000${workflowId}`;
+}
+
+/** Remember a traced workflow (keyed per repo state + workflow id). */
+export function rememberWorkflow(
+  repoKey: string,
+  headSha: string | undefined,
+  detail: WorkflowDetail,
+): void {
+  workflowCache.set(workflowCacheKey(repoKey, headSha, detail.workflowId), detail);
+}
+
+/** Get a cached traced workflow, or undefined. */
+export function getCachedWorkflow(
+  repoKey: string,
+  headSha: string | undefined,
+  workflowId: string,
+): WorkflowDetail | undefined {
+  return workflowCache.get(workflowCacheKey(repoKey, headSha, workflowId));
 }
 
 const summaryCache = new Map<string, string>();
@@ -154,6 +197,7 @@ export function resetStoresForTests(): void {
   diffStore.clear();
   workdirDiffStore.clear();
   compareSummaryCache.clear();
-  guidanceCache.clear();
+  guideCache.clear();
+  workflowCache.clear();
   summaryCache.clear();
 }
