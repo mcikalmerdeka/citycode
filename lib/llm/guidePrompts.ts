@@ -20,7 +20,12 @@ import {
   indexEdgeLines,
   rankIndexFiles,
 } from "../guidance/fileIndex";
-import { extractJsonObject, groundGuide, groundWorkflowDetail } from "../guidance/ground";
+import {
+  extractJsonObject,
+  groundCustomWorkflow,
+  groundGuide,
+  groundWorkflowDetail,
+} from "../guidance/ground";
 import type { RepoGuide, WorkflowDetail, WorkflowSummary } from "../guidance/types";
 import type { CodeGraph } from "../types";
 import { getLlmClient, LLM_REASONING_EFFORT } from "./client";
@@ -143,6 +148,75 @@ export async function generateRepoGuide(
   const text = replyText(response);
   if (text.length === 0) throw new Error("CityCode: the model returned an empty repository guide");
   return { guide: groundGuide(extractJsonObject(text), graph) };
+}
+
+/* ------------------------------------------------------------------ *
+ * Custom demo — a workflow designed from the user's own question
+ * ------------------------------------------------------------------ */
+
+export const ASK_SYSTEM_PROMPT = [
+  "You are the onboarding guide inside CityCode. A user asked how something works in this repository.",
+  "Design ONE guided demo that answers the question by following the data or control flow through real files.",
+  "Reply with ONE JSON object and nothing else - no markdown, no code fences. Shape (the // notes are instructions, not part of the JSON):",
+  "{",
+  '  "title": string,    // a short phrase naming the flow, e.g. "How a pasted URL becomes a city"',
+  '  "goal": string,     // one sentence: what this demo explains, answering the question',
+  '  "trigger": string,  // one sentence: the action or event that starts the flow',
+  '  "route": [ { "file": string, "symbol": string } ]  // 3-9 stops in execution order, trigger first, result last; "symbol" is optional',
+  "}",
+  "Rules:",
+  '- Every "file" MUST be copied exactly from the FILE INDEX. Never invent a path. A "symbol" must be a function name listed for that file, otherwise omit it.',
+  "- Follow real hand-offs: consecutive stops should usually be connected by an IMPORT LINK (caller -> callee). Touch at least 2 different files.",
+  "- Stay on the user's question. Plain English, short and concrete, no markdown.",
+].join("\n");
+
+/** The user message for a custom-demo request (pure). */
+export function buildAskUserPrompt(graph: CodeGraph, question: string): string {
+  const indexed = rankIndexFiles(graph, INDEX_MAX_FILES).sort((a, b) =>
+    a.file.id < b.file.id ? -1 : a.file.id > b.file.id ? 1 : 0,
+  );
+  const edgeLines = indexEdgeLines(graph, new Set(indexed.map((entry) => entry.file.id)), INDEX_MAX_EDGE_LINES);
+  const skim =
+    graph.edges.length === 0 && graph.files.every((file) => file.functions.length === 0)
+      ? "(Note: summarized mode — no function or import data; work from paths and sizes.)"
+      : "";
+  return [
+    `QUESTION: ${question}`,
+    `Source: ${graph.source} — ${graph.repoPath}`,
+    skim,
+    `FILE INDEX (${indexed.length} of ${graph.files.length} files — cite ONLY these exact paths):`,
+    ...indexed.map(describeIndexEntry),
+    "IMPORT LINKS among indexed files (importer -> imported{symbols}):",
+    ...(edgeLines.length === 0 ? ["(none)"] : edgeLines),
+    "",
+    "Produce the JSON demo described in your instructions.",
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n");
+}
+
+/**
+ * One LLM call designing a demo for the user's question. The result is
+ * grounded against the graph (real files only) and gets a unique id.
+ */
+export async function designWorkflow(
+  graph: CodeGraph,
+  question: string,
+  existingIds: Iterable<string>,
+): Promise<{ workflow: WorkflowSummary }> {
+  const { client, model } = getLlmClient();
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      { role: "system", content: ASK_SYSTEM_PROMPT },
+      { role: "user", content: buildAskUserPrompt(graph, question) },
+    ],
+    reasoning_effort: LLM_REASONING_EFFORT,
+  });
+  const text = replyText(response);
+  if (text.length === 0) throw new Error("CityCode: the model returned an empty demo");
+  const workflow = groundCustomWorkflow(extractJsonObject(text), graph, existingIds);
+  return { workflow: { ...workflow, question } };
 }
 
 /* ------------------------------------------------------------------ *

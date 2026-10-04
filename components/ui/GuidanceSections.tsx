@@ -6,6 +6,8 @@
  * path. No data fetching here; GuidanceModal owns that and passes handlers.
  */
 
+import { useState, type FormEvent } from "react";
+
 import type { GuideFeature, ReadingStop, WorkflowSummary } from "@/lib/guidance/types";
 
 export function baseName(fileId: string): string {
@@ -99,6 +101,9 @@ export function WorkflowCard({
           </span>
         </span>
         <span className="text-xs leading-relaxed text-[var(--ink-secondary)]">{workflow.goal}</span>
+        {workflow.question !== undefined ? (
+          <span className="text-[11px] italic leading-snug text-[#5B5BD6]">Your question: “{workflow.question}”</span>
+        ) : null}
         {workflow.trigger.length > 0 ? (
           <span className="text-[11px] leading-snug text-[var(--ink-secondary)]">
             <span className="font-medium text-[var(--ink)]">Starts when:</span> {workflow.trigger}
@@ -117,6 +122,60 @@ export function WorkflowCard({
         ) : null}
       </button>
     </li>
+  );
+}
+
+/**
+ * Ask-your-own-question box: the answer becomes a new guided demo in the
+ * list. `onAsk` resolves true on success (the box then clears itself).
+ */
+export function AskBox({
+  busy,
+  error,
+  onAsk,
+}: {
+  busy: boolean;
+  error: string | null;
+  onAsk: (question: string) => Promise<boolean>;
+}) {
+  const [question, setQuestion] = useState("");
+  const submit = async (event: FormEvent): Promise<void> => {
+    event.preventDefault();
+    const text = question.trim();
+    if (text.length === 0 || busy) return;
+    if (await onAsk(text)) setQuestion("");
+  };
+  return (
+    <form onSubmit={(event) => void submit(event)} className="mt-3 rounded-xl border border-dashed border-[var(--border)] p-3">
+      <label htmlFor="guidance-ask" className="text-xs font-medium text-[var(--ink)]">
+        Not seeing what you want to know? Ask how something works:
+      </label>
+      <div className="mt-1.5 flex gap-2">
+        <input
+          id="guidance-ask"
+          type="text"
+          value={question}
+          maxLength={300}
+          disabled={busy}
+          onChange={(event) => setQuestion(event.target.value)}
+          placeholder="e.g. How does a GitHub URL end up as buildings?"
+          className="focus-ring min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-xs text-[var(--ink)] placeholder:text-[var(--ink-secondary)] disabled:opacity-60"
+        />
+        <button
+          type="submit"
+          disabled={busy || question.trim().length === 0}
+          className="pill-button focus-ring inline-flex shrink-0 items-center gap-1.5 text-xs"
+        >
+          {busy ? <Spinner /> : null}
+          {busy ? "Designing…" : "Create demo"}
+        </button>
+      </div>
+      {error !== null ? (
+        <p role="alert" className="mt-1.5 text-[11px] leading-snug text-[#C05B4A]">
+          {error}
+        </p>
+      ) : null}
+    </form>
   );
 }
 

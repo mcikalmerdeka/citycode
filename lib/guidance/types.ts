@@ -43,6 +43,8 @@ export interface WorkflowSummary {
   trigger: string;
   /** Ordered stops (trigger first, result last); ≥ 2 distinct files. */
   route: WorkflowStop[];
+  /** Present on demos the user asked for: the question that created it. */
+  question?: string;
 }
 
 export interface GuideFeature {
@@ -116,13 +118,14 @@ function isStop(value: unknown): value is WorkflowStop {
   return isRecord(value) && isStr(value.fileId) && (value.symbol === undefined || isStr(value.symbol));
 }
 
-function isWorkflowSummary(value: unknown): value is WorkflowSummary {
+export function isWorkflowSummary(value: unknown): value is WorkflowSummary {
   return (
     isRecord(value) &&
     isStr(value.id) &&
     isStr(value.title) &&
     isStr(value.goal) &&
     isStr(value.trigger) &&
+    (value.question === undefined || isStr(value.question)) &&
     Array.isArray(value.route) &&
     value.route.every(isStop)
   );

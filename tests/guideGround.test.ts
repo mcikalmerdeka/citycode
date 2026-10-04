@@ -3,6 +3,7 @@ import {
   GUIDE_LIMITS,
   buildExcerpt,
   extractJsonObject,
+  groundCustomWorkflow,
   groundGuide,
   groundWorkflowDetail,
   normalizePath,
@@ -121,6 +122,30 @@ describe("groundGuide", () => {
     expect(() => groundGuide({ identity: "", workflows: [], features: [] }, graph)).toThrow(/unusable repository guide/);
     expect(() => groundGuide({ identity: "x", workflows: [], features: [] }, graph)).toThrow(/unusable repository guide/);
     expect(() => groundGuide("not an object", graph)).toThrow(/unusable repository guide/);
+  });
+});
+
+describe("groundCustomWorkflow", () => {
+  const raw = {
+    workflow: {
+      title: "How a request is handled",
+      goal: "Explains the request path",
+      trigger: "A request arrives",
+      route: [{ file: "app/route.ts", symbol: "handle" }, { file: "ghost.ts" }, { file: "lib/work.ts" }],
+    },
+  };
+
+  it("accepts the wrapped or bare shape, keeps real files, and avoids existing ids", () => {
+    const wrapped = groundCustomWorkflow(raw, graph, ["how-a-request-is-handled"]);
+    expect(wrapped.id).toBe("how-a-request-is-handled-2");
+    expect(wrapped.route.map((s) => s.fileId)).toEqual(["app/route.ts", "lib/work.ts"]);
+    expect(groundCustomWorkflow(raw.workflow, graph, []).id).toBe("how-a-request-is-handled");
+  });
+
+  it("throws a readable error when the question maps to fewer than two real files", () => {
+    const bad = { title: "T", goal: "G", route: [{ file: "lib/util.ts" }, { file: "ghost.ts" }] };
+    expect(() => groundCustomWorkflow(bad, graph, [])).toThrow(/try rephrasing/);
+    expect(() => groundCustomWorkflow("nope", graph, [])).toThrow(/try rephrasing/);
   });
 });
 

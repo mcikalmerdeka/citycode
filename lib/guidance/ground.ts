@@ -167,9 +167,12 @@ function groundRoute(raw: unknown, byId: ReadonlyMap<string, FileNode>): Workflo
   return stops;
 }
 
-function groundWorkflows(raw: unknown, byId: ReadonlyMap<string, FileNode>): WorkflowSummary[] {
+function groundWorkflows(
+  raw: unknown,
+  byId: ReadonlyMap<string, FileNode>,
+  usedIds: Set<string> = new Set(),
+): WorkflowSummary[] {
   const workflows: WorkflowSummary[] = [];
-  const usedIds = new Set<string>();
   for (const item of asArray(raw)) {
     if (workflows.length >= L.workflows) break;
     const rec = asRecord(item);
@@ -246,6 +249,27 @@ export function groundGuide(raw: unknown, graph: CodeGraph): RepoGuide {
     readingPath: groundReadingPath(rec.readingPath, byId),
     dataFlow: clean(rec.dataFlow, L.dataFlow),
   };
+}
+
+/**
+ * Ground ONE workflow the model designed for a user's question. Same rules
+ * as the guide's own workflows (real files only, ≥ 2 distinct files); the id
+ * is made unique against `existingIds`. Accepts `{ workflow: {...} }` or the
+ * bare object. Throws a readable error when the question could not be mapped
+ * onto this repo's files.
+ */
+export function groundCustomWorkflow(
+  raw: unknown,
+  graph: CodeGraph,
+  existingIds: Iterable<string>,
+): WorkflowSummary {
+  const rec = asRecord(raw);
+  const candidate = asRecord(rec?.workflow) ?? rec;
+  const [workflow] = groundWorkflows([candidate], indexFiles(graph), new Set(existingIds));
+  if (workflow === undefined) {
+    throw new Error("CityCode: that question could not be mapped onto files in this repo — try rephrasing it");
+  }
+  return workflow;
 }
 
 /* ------------------------------------------------------------------ *

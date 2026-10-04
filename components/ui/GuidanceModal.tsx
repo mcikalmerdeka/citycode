@@ -19,6 +19,7 @@ import { useFlowStore } from "@/lib/guidance/flowStore";
 import {
   isRepoGuide,
   isWorkflowDetail,
+  isWorkflowSummary,
   type RepoGuide,
   type WorkflowDetail,
   type WorkflowSummary,
@@ -26,6 +27,7 @@ import {
 import { useCityStore } from "@/lib/store";
 
 import {
+  AskBox,
   FeatureList,
   ReadingPathList,
   SectionTitle,
@@ -108,6 +110,8 @@ export function GuidanceModal({
 
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [failure, setFailure] = useState<{ id: string; message: string } | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [askError, setAskError] = useState<string | null>(null);
   /** Bumped to cancel an in-flight "trace then play" (modal closed, repo changed). */
   const run = useRef(0);
 
@@ -187,6 +191,30 @@ export function GuidanceModal({
       }
     } finally {
       if (run.current === token) setLoadingId(null);
+    }
+  };
+
+  /** Create a custom demo from a question and add it to the guide's list. */
+  const askQuestion = async (question: string): Promise<boolean> => {
+    setAsking(true);
+    setAskError(null);
+    try {
+      const body = await postForData("/api/guidance/ask", { repoKey, question }, "Could not create that demo");
+      if (!isRecord(body) || !isWorkflowSummary(body.workflow)) {
+        throw new Error("The server returned an unexpected response");
+      }
+      const workflow = body.workflow;
+      queryClient.setQueryData<GuideResponse>(["guide", repoKey], (old) =>
+        old === undefined || old.guide.workflows.some((w) => w.id === workflow.id)
+          ? old
+          : { ...old, guide: { ...old.guide, workflows: [...old.guide.workflows, workflow] } },
+      );
+      return true;
+    } catch (error) {
+      setAskError(error instanceof Error ? error.message : "Could not create that demo");
+      return false;
+    } finally {
+      setAsking(false);
     }
   };
 
@@ -270,6 +298,7 @@ export function GuidanceModal({
                     ))}
                   </ul>
                 )}
+                <AskBox busy={asking} error={askError} onAsk={askQuestion} />
               </section>
 
               {guide.features.length > 0 ? (

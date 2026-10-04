@@ -32,14 +32,27 @@ const DETAIL: WorkflowDetail = {
   ],
 };
 
+const CUSTOM = {
+  id: "how-does-it-work",
+  title: "How does it work",
+  goal: "Explains it",
+  trigger: "You ask",
+  route: [{ fileId: "src/a.ts" }, { fileId: "src/b.ts" }],
+  question: "How does it work?",
+};
+
 vi.mock("../lib/llm/guidePrompts", () => ({
   generateRepoGuide: vi.fn(async () => ({ guide: GUIDE })),
   traceWorkflow: vi.fn(async () => ({ detail: DETAIL })),
+  designWorkflow: vi.fn(async () => ({ workflow: CUSTOM })),
 }));
 
-import { generateRepoGuide, traceWorkflow } from "../lib/llm/guidePrompts";
+import { designWorkflow, generateRepoGuide, traceWorkflow } from "../lib/llm/guidePrompts";
+import { POST as askPost } from "../app/api/guidance/ask/route";
+import { getCachedGuide } from "../lib/llm/graphCache";
 const generate = vi.mocked(generateRepoGuide);
 const trace = vi.mocked(traceWorkflow);
+const design = vi.mocked(designWorkflow);
 
 function file(id: string) {
   return {
@@ -87,6 +100,7 @@ beforeEach(() => {
   resetStoresForTests();
   generate.mockImplementation(async () => ({ guide: GUIDE }));
   trace.mockImplementation(async () => ({ detail: DETAIL }));
+  design.mockImplementation(async () => ({ workflow: CUSTOM }));
 });
 
 afterEach(() => {
@@ -153,6 +167,82 @@ describe("POST /api/guidance", () => {
       const response = await guidePost(request({ repoKey: "local:E:/repos/does-not-exist" }));
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ guide: GUIDE, cached: false });
+    });
+  });
+});
+
+describe("POST /api/guidance/ask", () => {
+  const key = "local:E:/repos/ask";
+
+  function seedGuide(): void {
+    storeGraph(routeGraph("E:/repos/ask"));
+    rememberGuide(key, "abc123", GUIDE);
+  }
+
+  it("400 on bad body, empty or oversized question, unknown repo, or no guide", async () => {
+    expect((await askPost(new Request("http://localhost/x", { method: "POST", body: "{oops" }))).status).toBe(400);
+    expect((await askPost(request({ question: "q" }))).status).toBe(400);
+    seedGuide();
+    expect((await askPost(request({ repoKey: key, question: "   " }))).status).toBe(400);
+    expect((await askPost(request({ repoKey: key, question: "x".repeat(301) }))).status).toBe(400);
+    expect((await askPost(request({ repoKey: "local:E:/nowhere", question: "q" }))).status).toBe(400);
+    resetStoresForTests();
+    storeGraph(routeGraph("E:/repos/ask"));
+    expect((await askPost(request({ repoKey: key, question: "q" }))).status).toBe(400); // no guide yet
+  });
+
+  it("adds the demo to the guide's list, and each new question appends another", async () => {
+    seedGuide();
+    await withKey(async () => {
+      const first = await askPost(request({ repoKey: key, question: "How does it work?" }));
+      expect(first.status).toBe(200);
+      expect(await first.json()).toEqual({ workflow: CUSTOM, existing: false });
+      expect(getCachedGuide(key, "abc123")!.workflows.map((w) => w.id)).toEqual(["run-it", "how-does-it-work"]);
+
+      design.mockImplementation(async () => ({ workflow: { ...CUSTOM, id: "second", question: "Another?" } }));
+      await askPost(request({ repoKey: key, question: "Another?" }));
+      expect(getCachedGuide(key, "abc123")!.workflows.map((w) => w.id)).toEqual(["run-it", "how-does-it-work", "second"]);
+    });
+  });
+
+  it("the same question again returns the existing demo without an LLM call", async () => {
+    seedGuide();
+    await withKey(async () => {
+      await askPost(request({ repoKey: key, question: "How does it work?" }));
+      const again = await askPost(request({ repoKey: key, question: "  how DOES it work? " }));
+      expect(await again.json()).toEqual({ workflow: CUSTOM, existing: true });
+      expect(design).toHaveBeenCalledOnce();
+      expect(getCachedGuide(key, "abc123")!.workflows).toHaveLength(2);
+    });
+  });
+
+  it("the new demo can then be traced like any other", async () => {
+    seedGuide();
+    await withKey(async () => {
+      await askPost(request({ repoKey: key, question: "How does it work?" }));
+      const traced = await workflowPost(request({ repoKey: key, workflowId: "how-does-it-work" }));
+      expect(traced.status).toBe(200);
+    });
+  });
+
+  it("503 when unconfigured, 502 when the model fails", async () => {
+    seedGuide();
+    const previousKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    resetLlmClientCacheForTests();
+    try {
+      expect((await askPost(request({ repoKey: key, question: "q" }))).status).toBe(503);
+    } finally {
+      if (previousKey !== undefined) process.env.OPENAI_API_KEY = previousKey;
+      resetLlmClientCacheForTests();
+    }
+    design.mockImplementation(async () => {
+      throw new Error("CityCode: that question could not be mapped onto files in this repo — try rephrasing it");
+    });
+    await withKey(async () => {
+      const response = await askPost(request({ repoKey: key, question: "q" }));
+      expect(response.status).toBe(502);
+      expect(((await response.json()) as { error: string }).error).toContain("rephrasing");
     });
   });
 });
