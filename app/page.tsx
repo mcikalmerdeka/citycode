@@ -341,7 +341,14 @@ export default function Home() {
       </div>
 
       {hasResult && (
-        <GuidanceModal repoKey={result.repoKey} open={guidanceOpen} onClose={() => setGuidanceOpen(false)} />
+        /* key: a new repo remounts the modal, so its session state
+         * (picked model, generated guide) never leaks across repos. */
+        <GuidanceModal
+          key={result.repoKey}
+          repoKey={result.repoKey}
+          open={guidanceOpen}
+          onClose={() => setGuidanceOpen(false)}
+        />
       )}
     </div>
   );

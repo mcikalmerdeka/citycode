@@ -5,9 +5,11 @@ import { simpleGit } from "simple-git";
 import { POST } from "../app/api/analyze/route";
 import { compareSummarySlot, snapshotFileName, snapshotFilePath } from "../lib/snapshot/key";
 import { localWalkFingerprint } from "../lib/snapshot/fingerprint";
-import { loadSnapshot } from "../lib/snapshot/load";
+import { loadSnapshot, loadSnapshotGuide } from "../lib/snapshot/load";
 import { carryOverSummaries, saveSnapshot } from "../lib/snapshot/save";
 import { SNAPSHOT_VERSION, isSnapshot, type Snapshot } from "../lib/snapshot/schema";
+import { DEFAULT_LLM_MODEL } from "../lib/llm/models";
+import type { RepoGuide } from "../lib/guidance/types";
 import { parseLsRemoteHead } from "../lib/git/clone";
 import { resetStoresForTests } from "../lib/llm/graphCache";
 import { computeRepoKey } from "../lib/repoKey";
@@ -248,6 +250,79 @@ describe("carryOverSummaries", () => {
   it("handles empty inputs", () => {
     expect(carryOverSummaries({}, currentStats)).toEqual({});
     expect(carryOverSummaries(entries, {})).toEqual({});
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * load.ts — per-model guide persistence
+ * ------------------------------------------------------------------ */
+
+describe("loadSnapshotGuide — per-model persistence", () => {
+  function guide(identity: string, model?: string): RepoGuide {
+    return {
+      identity,
+      model,
+      workflows: [],
+      features: [{ title: "Feature", summary: "Feature summary", files: [] }],
+      readingPath: [],
+      dataFlow: "data flow",
+    };
+  }
+
+  it("serves each model's own slot; unstamped legacy entries count as the default model's", () => {
+    const repoKey = "local:E:/repos/guide-models";
+    const headSha = "abc123";
+    const file = snapshotFilePath(repoKey, headSha);
+    snapshotFiles.push(file);
+
+    saveSnapshot(
+      minimalSnapshot({
+        repoGuides: {
+          "gpt-6-luna": guide("luna wrote this"),
+          "claude-haiku-5-5": guide("haiku wrote this"),
+        },
+      }),
+      repoKey,
+      headSha,
+    );
+
+    expect(loadSnapshotGuide(repoKey, headSha, "claude-haiku-5-5")?.identity).toBe("haiku wrote this");
+    expect(loadSnapshotGuide(repoKey, headSha, DEFAULT_LLM_MODEL)?.identity).toBe("luna wrote this");
+  });
+
+  it("the legacy single slot serves the default model (stamped on the way out), never another model", () => {
+    const repoKey = "local:E:/repos/guide-legacy";
+    const headSha = "abc123";
+    const file = snapshotFilePath(repoKey, headSha);
+    snapshotFiles.push(file);
+
+    saveSnapshot(minimalSnapshot({ repoGuide: guide("pre-selection guide") }), repoKey, headSha);
+
+    const legacy = loadSnapshotGuide(repoKey, headSha, DEFAULT_LLM_MODEL);
+    expect(legacy?.identity).toBe("pre-selection guide");
+    expect(legacy?.model).toBe(DEFAULT_LLM_MODEL); // normalized so caches stay consistent
+    expect(loadSnapshotGuide(repoKey, headSha, "claude-haiku-5-5")).toBeUndefined();
+  });
+
+  it("drops malformed per-model entries without losing the valid ones", () => {
+    const repoKey = "local:E:/repos/guide-corrupt";
+    const headSha = "abc123";
+    const file = snapshotFilePath(repoKey, headSha);
+    snapshotFiles.push(file);
+
+    saveSnapshot(
+      minimalSnapshot({
+        repoGuides: {
+          "gpt-6-luna": guide("luna wrote this"),
+          "claude-haiku-5-5": { identity: 5 } as unknown as RepoGuide,
+        },
+      }),
+      repoKey,
+      headSha,
+    );
+
+    const snapshot = loadSnapshot(repoKey, headSha);
+    expect(Object.keys(snapshot?.repoGuides ?? {})).toEqual(["gpt-6-luna"]);
   });
 });
 

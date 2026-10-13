@@ -1,23 +1,26 @@
 import { NextResponse } from "next/server";
 import { LlmConfigError, getLlmClient } from "@/lib/llm/client";
+import { LLM_MODELS, guideModelId, normalizeLlmModelId } from "@/lib/llm/models";
 import { getCachedGuide, getStoredGraph, rememberGuide } from "@/lib/llm/graphCache";
 import { designWorkflow } from "@/lib/llm/guidePrompts";
-import { loadSnapshot } from "@/lib/snapshot/load";
+import { loadSnapshotGuide } from "@/lib/snapshot/load";
 import { updateSnapshot } from "@/lib/snapshot/save";
 
 /**
  * POST /api/guidance/ask — create a custom guided demo from a question.
  *
- * Body: { repoKey, question }. The model designs one workflow (a route
- * through real files) that answers the question; it is grounded against the
- * graph and APPENDED to the repo's guide — in memory and in the snapshot —
- * so it sits in the same list as the generated demos and survives reloads.
- * Tracing it through the code happens later, lazily, exactly like any other
- * demo (/api/guidance/workflow). Asking the same question twice returns the
- * demo made the first time, with no LLM call.
+ * Body: { repoKey, question, model? }. The model (the session's Repo
+ * Guidance model choice) designs one workflow (a route through real files)
+ * that answers the question; it is grounded against the graph and APPENDED
+ * to that model's repo guide — in memory and in the snapshot — so it sits in
+ * the same list as the generated demos and survives reloads. Tracing it
+ * through the code happens later, lazily, exactly like any other demo
+ * (/api/guidance/workflow). Asking the same question twice returns the demo
+ * made the first time, with no LLM call.
  *
  * Failure mapping (never a plain 500):
- * - 400 malformed body / bad question / unknown repoKey / no guide yet / too many demos
+ * - 400 malformed body / bad question / unknown repoKey / unknown model id /
+ *   no guide yet for this model / too many demos
  * - 503 missing LLM configuration
  * - 502 upstream LLM failure, or a question the model could not map to files
  */
@@ -29,6 +32,7 @@ const MAX_WORKFLOWS = 30;
 interface AskBody {
   repoKey?: unknown;
   question?: unknown;
+  model?: unknown;
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -53,6 +57,15 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 400 },
     );
   }
+  const modelId = normalizeLlmModelId(body.model);
+  if (modelId === null) {
+    return NextResponse.json(
+      {
+        error: `CityCode: unknown model — pick one of: ${LLM_MODELS.map((model) => model.id).join(", ")}`,
+      },
+      { status: 400 },
+    );
+  }
 
   const graph = getStoredGraph(repoKey);
   if (graph === undefined) {
@@ -62,7 +75,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const guide = getCachedGuide(repoKey, graph.headSha) ?? loadSnapshot(repoKey, graph.headSha)?.repoGuide;
+  const guide = getCachedGuide(repoKey, graph.headSha, modelId) ?? loadSnapshotGuide(repoKey, graph.headSha, modelId);
   if (guide === undefined) {
     return NextResponse.json(
       { error: "CityCode: the guide is not available — close and reopen Repo Guidance first" },
@@ -82,18 +95,21 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
-    getLlmClient();
+    getLlmClient(modelId);
     const { workflow } = await designWorkflow(
       graph,
       question,
       guide.workflows.map((w) => w.id),
+      modelId,
     );
     // The guide may have been replaced while the model was thinking; append
-    // to whatever is current rather than to the copy read above.
-    const current = getCachedGuide(repoKey, graph.headSha) ?? guide;
+    // to whatever is current rather than to the copy read above. The model
+    // stamp rides along, so the snapshot stays per-model consistent.
+    const current = getCachedGuide(repoKey, graph.headSha, modelId) ?? guide;
     const updated = { ...current, workflows: [...current.workflows, workflow] };
     rememberGuide(repoKey, graph.headSha, updated);
     updateSnapshot(repoKey, graph.headSha, (snapshot) => {
+      snapshot.repoGuides = { ...(snapshot.repoGuides ?? {}), [guideModelId(updated)]: updated };
       snapshot.repoGuide = updated;
     });
     return NextResponse.json({ workflow, existing: false }, { status: 200 });

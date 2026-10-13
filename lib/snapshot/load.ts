@@ -15,7 +15,8 @@
 
 import fs from "node:fs";
 
-import { isRepoGuide, isWorkflowDetail, type WorkflowDetail } from "../guidance/types";
+import { isRepoGuide, isWorkflowDetail, type RepoGuide, type WorkflowDetail } from "../guidance/types";
+import { ensureGuideModel, guideModelId } from "../llm/models";
 import { snapshotFilePath } from "./key";
 import { isSnapshot, SNAPSHOT_VERSION, type Snapshot } from "./schema";
 
@@ -27,6 +28,18 @@ import { isSnapshot, SNAPSHOT_VERSION, type Snapshot } from "./schema";
 function dropInvalidGuidance(snapshot: Snapshot): void {
   if (snapshot.repoGuide !== undefined && !isRepoGuide(snapshot.repoGuide)) {
     delete snapshot.repoGuide;
+  }
+  if (snapshot.repoGuides !== undefined) {
+    const perModel: unknown = snapshot.repoGuides;
+    if (typeof perModel !== "object" || perModel === null || Array.isArray(perModel)) {
+      delete snapshot.repoGuides;
+    } else {
+      const valid: Record<string, RepoGuide> = {};
+      for (const [modelId, guide] of Object.entries(perModel)) {
+        if (isRepoGuide(guide)) valid[modelId] = guide;
+      }
+      snapshot.repoGuides = valid;
+    }
   }
   const details: unknown = snapshot.workflowDetails;
   if (details === undefined) return;
@@ -68,4 +81,25 @@ export function loadSnapshot(repoKey: string, headSha?: string): Snapshot | unde
   }
   dropInvalidGuidance(parsed);
   return parsed;
+}
+
+/**
+ * The persisted guide for ONE model: first the per-model slots
+ * (`repoGuides`), then the legacy single slot — but only when its stamp
+ * matches the requested model (unstamped legacy guides are the default
+ * model's, so they only ever serve that model). `undefined` = miss → the
+ * caller generates. Legacy guides get a default stamp filled in so every
+ * guide leaving this function is stamped.
+ */
+export function loadSnapshotGuide(
+  repoKey: string,
+  headSha: string | undefined,
+  modelId: string,
+): RepoGuide | undefined {
+  const snapshot = loadSnapshot(repoKey, headSha);
+  const perModel = snapshot?.repoGuides?.[modelId];
+  if (perModel !== undefined) return ensureGuideModel(perModel);
+  const legacy = snapshot?.repoGuide;
+  if (legacy !== undefined && guideModelId(legacy) === modelId) return ensureGuideModel(legacy);
+  return undefined;
 }

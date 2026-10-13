@@ -8,6 +8,7 @@ import {
   resetStoresForTests,
   storeGraph,
 } from "../lib/llm/graphCache";
+import { DEFAULT_LLM_MODEL } from "../lib/llm/models";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -46,46 +47,58 @@ const DETAIL: WorkflowDetail = {
 
 describe("guidance caches", () => {
   it("guide is repo-state keyed: headSha participates, undefined headSha is its own slot", () => {
-    expect(getCachedGuide("local:E:/repos/demo", "abc123")).toBeUndefined();
-    rememberGuide("local:E:/repos/demo", "abc123", GUIDE);
-    expect(getCachedGuide("local:E:/repos/demo", "abc123")).toBe(GUIDE);
+    expect(getCachedGuide("local:E:/repos/demo", "abc123", DEFAULT_LLM_MODEL)).toBeUndefined();
+    rememberGuide("local:E:/repos/demo", "abc123", GUIDE); // unstamped → the default model's slot
+    expect(getCachedGuide("local:E:/repos/demo", "abc123", DEFAULT_LLM_MODEL)).toBe(GUIDE);
     // new HEAD ⇒ new guide slot
-    expect(getCachedGuide("local:E:/repos/demo", "def456")).toBeUndefined();
+    expect(getCachedGuide("local:E:/repos/demo", "def456", DEFAULT_LLM_MODEL)).toBeUndefined();
     // non-git local folder ⇒ its own slot under headSha "none"
     rememberGuide("local:E:/repos/demo", undefined, { ...GUIDE, identity: "no git" });
-    expect(guidanceCacheKey("local:E:/repos/demo", undefined)).toBe("local:E:/repos/demo\u0000none");
-    expect(getCachedGuide("local:E:/repos/demo", undefined)?.identity).toBe("no git");
+    expect(guidanceCacheKey("local:E:/repos/demo", undefined, DEFAULT_LLM_MODEL)).toBe(
+      "local:E:/repos/demo\u0000none\u0000gpt-6-luna",
+    );
+    expect(getCachedGuide("local:E:/repos/demo", undefined, DEFAULT_LLM_MODEL)?.identity).toBe("no git");
   });
 
-  it("workflows are cached per workflow id within a repo state", () => {
-    rememberWorkflow("k", "s", DETAIL);
-    expect(getCachedWorkflow("k", "s", "wf")).toBe(DETAIL);
-    expect(getCachedWorkflow("k", "s", "other")).toBeUndefined();
-    expect(getCachedWorkflow("k", "t", "wf")).toBeUndefined();
+  it("each model keeps its own guide slot for the same repo state", () => {
+    rememberGuide("k", "s", GUIDE);
+    rememberGuide("k", "s", { ...GUIDE, model: "claude-haiku-5-5", identity: "haiku's take" });
+    expect(getCachedGuide("k", "s", DEFAULT_LLM_MODEL)).toBe(GUIDE);
+    expect(getCachedGuide("k", "s", "claude-haiku-5-5")?.identity).toBe("haiku's take");
   });
 
-  it("re-analysis (a different graph object for the same repo) drops cached guidance", () => {
+  it("workflows are cached per repo state, model, and workflow id", () => {
+    rememberWorkflow("k", "s", DEFAULT_LLM_MODEL, DETAIL);
+    expect(getCachedWorkflow("k", "s", DEFAULT_LLM_MODEL, "wf")).toBe(DETAIL);
+    expect(getCachedWorkflow("k", "s", DEFAULT_LLM_MODEL, "other")).toBeUndefined();
+    expect(getCachedWorkflow("k", "s", "claude-haiku-5-5", "wf")).toBeUndefined();
+    expect(getCachedWorkflow("k", "t", DEFAULT_LLM_MODEL, "wf")).toBeUndefined();
+  });
+
+  it("re-analysis (a different graph object for the same repo) drops cached guidance for every model", () => {
     const first = graph([fileNode("a.ts")], []);
     first.repoPath = "E:/repos/reanalyzed";
     const key = "local:E:/repos/reanalyzed";
     storeGraph(first);
     rememberGuide(key, "abc123", GUIDE);
-    rememberWorkflow(key, "abc123", DETAIL);
+    rememberGuide(key, "abc123", { ...GUIDE, model: "claude-haiku-5-5" });
+    rememberWorkflow(key, "abc123", DEFAULT_LLM_MODEL, DETAIL);
 
     storeGraph(first); // same object: nothing changed, nothing dropped
-    expect(getCachedGuide(key, "abc123")).toBeDefined();
+    expect(getCachedGuide(key, "abc123", DEFAULT_LLM_MODEL)).toBeDefined();
 
     storeGraph({ ...first }); // re-analyzed: new object for the same repo
-    expect(getCachedGuide(key, "abc123")).toBeUndefined();
-    expect(getCachedWorkflow(key, "abc123", "wf")).toBeUndefined();
+    expect(getCachedGuide(key, "abc123", DEFAULT_LLM_MODEL)).toBeUndefined();
+    expect(getCachedGuide(key, "abc123", "claude-haiku-5-5")).toBeUndefined();
+    expect(getCachedWorkflow(key, "abc123", DEFAULT_LLM_MODEL, "wf")).toBeUndefined();
   });
 
   it("resetStoresForTests clears them", () => {
     rememberGuide("k", "s", GUIDE);
-    rememberWorkflow("k", "s", DETAIL);
+    rememberWorkflow("k", "s", DEFAULT_LLM_MODEL, DETAIL);
     resetStoresForTests();
-    expect(getCachedGuide("k", "s")).toBeUndefined();
-    expect(getCachedWorkflow("k", "s", "wf")).toBeUndefined();
+    expect(getCachedGuide("k", "s", DEFAULT_LLM_MODEL)).toBeUndefined();
+    expect(getCachedWorkflow("k", "s", DEFAULT_LLM_MODEL, "wf")).toBeUndefined();
   });
 });
 
