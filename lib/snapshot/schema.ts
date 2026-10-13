@@ -90,6 +90,15 @@ export interface Snapshot {
    */
   repoGuide?: RepoGuide;
   /**
+   * Repo guides keyed by the model id that generated them (see
+   * lib/llm/models.ts) — Repo Guidance lets the user pick a model, and each
+   * model keeps its own guide for the same repo state. Optional; the
+   * legacy single `repoGuide` slot above is kept in sync (it always mirrors
+   * the most recent guide) so older readers and existing entries keep
+   * working. load.ts drops malformed entries, never the whole snapshot.
+   */
+  repoGuides?: Record<string, RepoGuide>;
+  /**
    * Traced workflows by workflow id (generated lazily by
    * /api/guidance/workflow). Same optional/validated contract as `repoGuide`.
    */
@@ -142,6 +151,7 @@ export function isSnapshot(value: unknown): value is Snapshot {
   if (!isRecord(value.llmSummaries) || !isRecord(value.compareSummaries) || !isRecord(value.fileStats)) {
     return false;
   }
+  if (value.repoGuides !== undefined && !isRecord(value.repoGuides)) return false;
   if (value.skim !== undefined && typeof value.skim !== "boolean") return false;
   return isStr(value.createdAt) && !Number.isNaN(Date.parse(value.createdAt));
 }

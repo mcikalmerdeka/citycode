@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as guidePost } from "../app/api/guidance/route";
 import { POST as workflowPost } from "../app/api/guidance/workflow/route";
 import { rememberGuide, resetStoresForTests, storeGraph } from "../lib/llm/graphCache";
+import { DEFAULT_LLM_MODEL } from "../lib/llm/models";
 import { resetLlmClientCacheForTests } from "../lib/llm/client";
 import type { RepoGuide, WorkflowDetail } from "../lib/guidance/types";
 import type { CodeGraph } from "../lib/types";
@@ -23,6 +24,11 @@ const GUIDE: RepoGuide = {
   readingPath: [],
   dataFlow: "",
 };
+
+/* Stamped variants — routes resolve a model for every request, and the
+ * (mocked, real-shaped) generation echoes it into the guide's stamp. */
+const LUNA_GUIDE: RepoGuide = { ...GUIDE, model: "gpt-6-luna" };
+const HAIKU_GUIDE: RepoGuide = { ...GUIDE, model: "claude-haiku-5-5" };
 
 const DETAIL: WorkflowDetail = {
   workflowId: "run-it",
@@ -96,9 +102,25 @@ async function withKey(fn: () => Promise<void>): Promise<void> {
   }
 }
 
+/** Run `fn` with both providers' keys configured. */
+async function withBothKeys(fn: () => Promise<void>): Promise<void> {
+  process.env.OPENAI_API_KEY = "test-key";
+  process.env.ANTHROPIC_API_KEY = "test-key";
+  resetLlmClientCacheForTests();
+  try {
+    await fn();
+  } finally {
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    resetLlmClientCacheForTests();
+  }
+}
+
 beforeEach(() => {
   resetStoresForTests();
-  generate.mockImplementation(async () => ({ guide: GUIDE }));
+  generate.mockImplementation(async (_graph, _keyFiles, modelId) => ({
+    guide: modelId === undefined ? GUIDE : { ...GUIDE, model: modelId },
+  }));
   trace.mockImplementation(async () => ({ detail: DETAIL }));
   design.mockImplementation(async () => ({ workflow: CUSTOM }));
 });
@@ -125,10 +147,10 @@ describe("POST /api/guidance", () => {
     await withKey(async () => {
       const first = await guidePost(request({ repoKey: key }));
       expect(first.status).toBe(200);
-      expect(await first.json()).toEqual({ guide: GUIDE, cached: false });
+      expect(await first.json()).toEqual({ guide: LUNA_GUIDE, cached: false });
 
       const second = await guidePost(request({ repoKey: key }));
-      expect(await second.json()).toEqual({ guide: GUIDE, cached: true });
+      expect(await second.json()).toEqual({ guide: LUNA_GUIDE, cached: true });
       expect(generate).toHaveBeenCalledOnce();
     });
   });
@@ -166,8 +188,78 @@ describe("POST /api/guidance", () => {
     await withKey(async () => {
       const response = await guidePost(request({ repoKey: "local:E:/repos/does-not-exist" }));
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ guide: GUIDE, cached: false });
+      expect(await response.json()).toEqual({ guide: LUNA_GUIDE, cached: false });
     });
+  });
+
+  it("400 on an unknown model id, without calling the LLM", async () => {
+    storeGraph(routeGraph("E:/repos/sel"));
+    const response = await guidePost(request({ repoKey: "local:E:/repos/sel", model: "gpt-4" }));
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toContain("unknown model");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("probe answers cached:false before any generation, without calling the LLM", async () => {
+    storeGraph(routeGraph("E:/repos/sel"));
+    await withBothKeys(async () => {
+      const response = await guidePost(request({ repoKey: "local:E:/repos/sel", probe: true }));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ cached: false });
+      expect(generate).not.toHaveBeenCalled();
+    });
+  });
+
+  it("generating with claude-haiku-5-5 threads the model through and stamps the guide", async () => {
+    storeGraph(routeGraph("E:/repos/sel"));
+    await withBothKeys(async () => {
+      const first = await guidePost(request({ repoKey: "local:E:/repos/sel", model: "claude-haiku-5-5" }));
+      expect(first.status).toBe(200);
+      expect(await first.json()).toEqual({ guide: HAIKU_GUIDE, cached: false });
+      expect(generate).toHaveBeenCalledWith(expect.anything(), expect.anything(), "claude-haiku-5-5");
+    });
+  });
+
+  it("each model caches separately: a model switch generates again; the same model reopens warm", async () => {
+    storeGraph(routeGraph("E:/repos/sel"));
+    await withBothKeys(async () => {
+      await guidePost(request({ repoKey: "local:E:/repos/sel" }));
+      await guidePost(request({ repoKey: "local:E:/repos/sel" })); // warm for the default model
+      expect(generate).toHaveBeenCalledTimes(1);
+
+      const switched = await guidePost(request({ repoKey: "local:E:/repos/sel", model: "claude-haiku-5-5" }));
+      expect(await switched.json()).toEqual({ guide: HAIKU_GUIDE, cached: false });
+      const warm = await guidePost(request({ repoKey: "local:E:/repos/sel", model: "claude-haiku-5-5" }));
+      expect(await warm.json()).toEqual({ guide: HAIKU_GUIDE, cached: true });
+      expect(generate).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("probe returns whichever guide exists for this repo state", async () => {
+    storeGraph(routeGraph("E:/repos/sel"));
+    await withBothKeys(async () => {
+      await guidePost(request({ repoKey: "local:E:/repos/sel", model: "claude-haiku-5-5" }));
+      const response = await guidePost(request({ repoKey: "local:E:/repos/sel", probe: true }));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ guide: HAIKU_GUIDE, cached: true });
+      expect(generate).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("503 naming ANTHROPIC_API_KEY when the Anthropic model is requested without a key", async () => {
+    storeGraph(routeGraph("E:/repos/sel"));
+    process.env.OPENAI_API_KEY = "test-key";
+    delete process.env.ANTHROPIC_API_KEY;
+    resetLlmClientCacheForTests();
+    try {
+      const response = await guidePost(request({ repoKey: "local:E:/repos/sel", model: "claude-haiku-5-5" }));
+      expect(response.status).toBe(503);
+      expect(((await response.json()) as { error: string }).error).toContain("ANTHROPIC_API_KEY");
+      expect(generate).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+      resetLlmClientCacheForTests();
+    }
   });
 });
 
@@ -197,11 +289,11 @@ describe("POST /api/guidance/ask", () => {
       const first = await askPost(request({ repoKey: key, question: "How does it work?" }));
       expect(first.status).toBe(200);
       expect(await first.json()).toEqual({ workflow: CUSTOM, existing: false });
-      expect(getCachedGuide(key, "abc123")!.workflows.map((w) => w.id)).toEqual(["run-it", "how-does-it-work"]);
+      expect(getCachedGuide(key, "abc123", DEFAULT_LLM_MODEL)!.workflows.map((w) => w.id)).toEqual(["run-it", "how-does-it-work"]);
 
       design.mockImplementation(async () => ({ workflow: { ...CUSTOM, id: "second", question: "Another?" } }));
       await askPost(request({ repoKey: key, question: "Another?" }));
-      expect(getCachedGuide(key, "abc123")!.workflows.map((w) => w.id)).toEqual(["run-it", "how-does-it-work", "second"]);
+      expect(getCachedGuide(key, "abc123", DEFAULT_LLM_MODEL)!.workflows.map((w) => w.id)).toEqual(["run-it", "how-does-it-work", "second"]);
     });
   });
 
@@ -212,7 +304,7 @@ describe("POST /api/guidance/ask", () => {
       const again = await askPost(request({ repoKey: key, question: "  how DOES it work? " }));
       expect(await again.json()).toEqual({ workflow: CUSTOM, existing: true });
       expect(design).toHaveBeenCalledOnce();
-      expect(getCachedGuide(key, "abc123")!.workflows).toHaveLength(2);
+      expect(getCachedGuide(key, "abc123", DEFAULT_LLM_MODEL)!.workflows).toHaveLength(2);
     });
   });
 
@@ -223,6 +315,24 @@ describe("POST /api/guidance/ask", () => {
       const traced = await workflowPost(request({ repoKey: key, workflowId: "how-does-it-work" }));
       expect(traced.status).toBe(200);
     });
+  });
+
+  it("threads the session model into the design call", async () => {
+    storeGraph(routeGraph("E:/repos/ask"));
+    rememberGuide(key, "abc123", HAIKU_GUIDE);
+    await withBothKeys(async () => {
+      const response = await askPost(request({ repoKey: key, question: "How does it work?", model: "claude-haiku-5-5" }));
+      expect(response.status).toBe(200);
+      expect(design).toHaveBeenCalledWith(expect.anything(), "How does it work?", ["run-it"], "claude-haiku-5-5");
+    });
+  });
+
+  it("400 on an unknown model id, without calling the LLM", async () => {
+    seedGuide();
+    const response = await askPost(request({ repoKey: key, question: "q", model: "nope" }));
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toContain("unknown model");
+    expect(design).not.toHaveBeenCalled();
   });
 
   it("503 when unconfigured, 502 when the model fails", async () => {
@@ -289,6 +399,41 @@ describe("POST /api/guidance/workflow", () => {
       expect(await second.json()).toEqual({ detail: DETAIL, cached: true });
       expect(trace).toHaveBeenCalledOnce();
     });
+  });
+
+  it("threads the session model into the trace call", async () => {
+    seedGuide();
+    await withKey(async () => {
+      const response = await workflowPost(request({ repoKey: key, workflowId: "run-it", model: "gpt-6-luna" }));
+      expect(response.status).toBe(200);
+      expect(trace).toHaveBeenCalledWith(expect.anything(), GUIDE.workflows[0], expect.anything(), "gpt-6-luna");
+    });
+  });
+
+  it("workflow traces are cached per model even for the same workflow id", async () => {
+    seedGuide(); // default model's guide
+    rememberGuide(key, "abc123", HAIKU_GUIDE); // same workflow id, other model's guide
+    await withBothKeys(async () => {
+      const first = await workflowPost(request({ repoKey: key, workflowId: "run-it", model: "claude-haiku-5-5" }));
+      expect(first.status).toBe(200);
+      expect(await first.json()).toEqual({ detail: DETAIL, cached: false });
+
+      const warm = await workflowPost(request({ repoKey: key, workflowId: "run-it", model: "claude-haiku-5-5" }));
+      expect(await warm.json()).toEqual({ detail: DETAIL, cached: true });
+      expect(trace).toHaveBeenCalledOnce();
+
+      const luna = await workflowPost(request({ repoKey: key, workflowId: "run-it" }));
+      expect(await luna.json()).toEqual({ detail: DETAIL, cached: false });
+      expect(trace).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("400 on an unknown model id, without calling the LLM", async () => {
+    seedGuide();
+    const response = await workflowPost(request({ repoKey: key, workflowId: "run-it", model: "nope" }));
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toContain("unknown model");
+    expect(trace).not.toHaveBeenCalled();
   });
 
   it("503 when the LLM is unconfigured", async () => {

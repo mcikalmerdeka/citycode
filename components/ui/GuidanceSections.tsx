@@ -2,13 +2,15 @@
 
 /**
  * GuidanceSections — the presentational pieces of the Repo Guidance modal:
- * workflow cards (the "what can you do" options), feature list, reading
- * path. No data fetching here; GuidanceModal owns that and passes handlers.
+ * the model picker (the layer shown before a guide is generated), workflow
+ * cards (the "what can you do" options), feature list, reading path. No
+ * data fetching here; GuidanceModal owns that and passes handlers.
  */
 
 import { useState, type FormEvent } from "react";
 
 import type { GuideFeature, ReadingStop, WorkflowSummary } from "@/lib/guidance/types";
+import type { LlmModelInfo } from "@/lib/llm/models";
 
 export function baseName(fileId: string): string {
   return fileId.slice(fileId.lastIndexOf("/") + 1);
@@ -20,6 +22,109 @@ export function SectionTitle({ children, hint }: { children: string; hint?: stri
       <h3 className="eyebrow">{children}</h3>
       {hint !== undefined ? <p className="text-[11px] text-[var(--ink-secondary)]">{hint}</p> : null}
     </div>
+  );
+}
+
+/**
+ * The model-selection layer shown before a guide is generated: one card per
+ * registry model. Fully controlled — `selected` (the last pick, defaulting
+ * to the registry default) and `onSelect` come from the modal, which stores
+ * them; confirming hands the chosen model id to `onConfirm`. `busy` covers
+ * the in-flight generation; `regenerate` swaps the copy and button label
+ * when a guide is already on screen.
+ */
+export function ModelPicker({
+  models,
+  selected,
+  onSelect,
+  busy,
+  error,
+  regenerate,
+  onConfirm,
+  onCancel,
+}: {
+  models: readonly LlmModelInfo[];
+  selected: string;
+  onSelect: (modelId: string) => void;
+  busy: boolean;
+  error: string | null;
+  regenerate: boolean;
+  onConfirm: (modelId: string) => void;
+  onCancel?: () => void;
+}) {
+  const selectedInfo = models.find((model) => model.id === selected);
+  const confirmLabel = `${regenerate ? "Regenerate" : "Generate"} with ${selectedInfo?.label ?? selected}`;
+
+  return (
+    <section className="space-y-3" aria-live="polite">
+      <div>
+        <SectionTitle hint="Used for this repo's guided demos, reading path, and ask-a-question answers">
+          Choose a model
+        </SectionTitle>
+        <p className="text-xs leading-relaxed text-[var(--ink-secondary)]">
+          {regenerate
+            ? "Each model keeps its own guide for this repo state — regenerating drafts a fresh one for your pick."
+            : "The model that reads this repo and drafts your guide. You can switch later; each model keeps its own copy."}
+        </p>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label="Guidance model">
+        {models.map((model) => (
+          <button
+            key={model.id}
+            type="button"
+            disabled={busy}
+            aria-pressed={selected === model.id}
+            onClick={() => onSelect(model.id)}
+            className={`focus-ring flex w-full flex-col gap-1 rounded-xl border bg-[var(--surface)] p-3 text-left shadow-[var(--pill-shadow)] transition-all hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-60 ${
+              selected === model.id ? "border-[#5B5BD6] shadow-md" : "border-[var(--border)]"
+            }`}
+          >
+            <span className="flex items-center justify-between gap-2">
+              <span className="text-[13px] font-semibold text-[var(--ink)]">{model.label}</span>
+              <span className="rounded-full border border-[var(--border)] px-1.5 py-px font-mono text-[9px] text-[var(--ink-secondary)]">
+                {model.provider}
+              </span>
+            </span>
+            <span className="text-[11px] leading-snug text-[var(--ink-secondary)]">{model.blurb}</span>
+          </button>
+        ))}
+      </div>
+
+      {busy ? (
+        <p className="flex items-center gap-2 text-xs text-[var(--ink-secondary)]">
+          <Spinner />
+          {selectedInfo?.label ?? "The model"} is reading the repo — the first run can take up to a minute.
+        </p>
+      ) : null}
+      {error !== null ? (
+        <p role="alert" className="text-xs leading-relaxed text-[#C05B4A]">
+          {error}
+        </p>
+      ) : null}
+
+      <div className="flex items-center justify-end gap-3">
+        {onCancel !== undefined ? (
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="focus-ring text-xs text-[var(--ink-secondary)] transition-colors hover:text-[var(--ink)] disabled:opacity-60"
+          >
+            Back
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => onConfirm(selected)}
+          disabled={busy}
+          className="pill-button focus-ring inline-flex items-center gap-1.5 text-xs"
+        >
+          {busy ? <Spinner /> : null}
+          {confirmLabel}
+        </button>
+      </div>
+    </section>
   );
 }
 

@@ -1,17 +1,28 @@
 /**
- * OpenAI LLM client (Phase 3) — the `lib/llm/client.ts` wrapper from the
- * plan. One shared OpenAI SDK instance against the standard OpenAI endpoint,
- * using OPENAI_API_KEY and the gpt-6-luna model (released 2026-09-22) at
- * reasoning effort "medium".
+ * LLM client factory (Phase 3, extended with a second provider) — the
+ * `lib/llm/client.ts` wrapper from the plan.
+ *
+ * `getLlmClient(modelId?)` hands out a provider-neutral {@link ChatClient}
+ * for a registry model (see lib/llm/models.ts): the default `gpt-6-luna`
+ * over the OpenAI SDK, or `claude-haiku-5-5` over Anthropic's Messages API
+ * (via the adapter in anthropicClient.ts). Each model's config is a
+ * per-model singleton; a missing env key for the requested provider throws
+ * {@link LlmConfigError}.
  *
  * Degradation contract: a missing/unusable configuration must never break
  * the city — callers catch {@link LlmConfigError} and surface a clear
- * "explanations disabled" message while everything else keeps working.
+ * "disabled" message while everything else keeps working.
  */
 
 import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 
-/** Thrown when the OPENAI_* env config is missing or malformed. */
+import type { ChatClient } from "./chat";
+import { DEFAULT_LLM_MODEL, findLlmModel, LLM_MODELS, type LlmModelInfo } from "./models";
+import { OpenAiChatClient } from "./openAiClient";
+import { AnthropicChatClient } from "./anthropicClient";
+
+/** Thrown when the env config for a model's provider is missing/malformed, or the model id is unknown. */
 export class LlmConfigError extends Error {
   constructor(message: string) {
     super(message);
@@ -19,47 +30,55 @@ export class LlmConfigError extends Error {
   }
 }
 
-/** The model CityCode summarizes with (kept in code; key comes from env). */
-export const LLM_MODEL = "gpt-6-luna";
-
-/** Reasoning effort applied to every CityCode summarization call. */
-export const LLM_REASONING_EFFORT = "medium" as const;
-
-/** Configuration facts read once. `client`/`model` drive every call. */
-interface LlmConfig {
-  client: OpenAI;
+/** Configuration facts for one model. `client`/`model` drive every call. */
+export interface LlmConfig {
+  client: ChatClient;
   model: string;
 }
 
-function readConfig(): LlmConfig {
+function readConfig(info: LlmModelInfo): LlmConfig {
   // Env is read lazily (per call-through) instead of at module load so that
   // tests and dev-server reloads always see the current environment.
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env[info.envKey];
 
   if (typeof apiKey !== "string" || apiKey.trim().length === 0) {
     throw new LlmConfigError(
-      "CityCode: OPENAI_API_KEY is not set — LLM explanations are disabled. " +
-        "The city still works; set the key in .env to enable explanations.",
+      `CityCode: ${info.envKey} is not set — ${info.label} is unavailable. ` +
+        "The city still works; set the key in .env to enable this model.",
     );
   }
 
-  // Standard OpenAI endpoint — no baseURL override is needed.
-  const client = new OpenAI({ apiKey });
-  return { client, model: LLM_MODEL };
+  const client: ChatClient =
+    info.provider === "openai"
+      ? new OpenAiChatClient(new OpenAI({ apiKey }).chat.completions)
+      : new AnthropicChatClient(new Anthropic({ apiKey }).messages);
+  return { client, model: info.id };
 }
 
-/** Module-level singleton — one client instance per server process. */
-let cached: LlmConfig | null = null;
+/** Module-level singletons — one client instance per model per server process. */
+const clients = new Map<string, LlmConfig>();
 
-/** Shared client accessor. Throws {@link LlmConfigError} when unconfigured. */
-export function getLlmClient(): LlmConfig {
-  if (cached === null) {
-    cached = readConfig();
+/**
+ * Shared client accessor for one registry model (default: gpt-6-luna, which
+ * is also what every non-guidance feature uses). Throws {@link LlmConfigError}
+ * when the model id is unknown or its provider's env key is missing.
+ */
+export function getLlmClient(modelId: string = DEFAULT_LLM_MODEL): LlmConfig {
+  const info = findLlmModel(modelId);
+  if (info === undefined) {
+    throw new LlmConfigError(
+      `CityCode: unknown LLM model "${modelId}" — available models: ${LLM_MODELS.map((model) => model.id).join(", ")}`,
+    );
   }
-  return cached;
+  let config = clients.get(info.id);
+  if (config === undefined) {
+    config = readConfig(info);
+    clients.set(info.id, config);
+  }
+  return config;
 }
 
-/** Clear the singleton (used by tests). */
+/** Clear the per-model singletons (used by tests). */
 export function resetLlmClientCacheForTests(): void {
-  cached = null;
+  clients.clear();
 }

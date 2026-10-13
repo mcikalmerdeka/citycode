@@ -8,7 +8,8 @@
 
 import type { CodeGraph, FileNode } from "../types";
 import type { ChangedFile } from "../git/diff";
-import { getLlmClient, LLM_REASONING_EFFORT } from "./client";
+import { getLlmClient } from "./client";
+import { LLM_REASONING_EFFORT } from "./chat";
 
 export const EXPLAIN_SYSTEM_PROMPT =
   "You explain codebases to developers in plain English. " +

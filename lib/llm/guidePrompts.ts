@@ -1,7 +1,8 @@
 /**
  * Repo Guidance prompts — the two LLM calls behind the guided demos.
  *
- * - Phase A, {@link generateRepoGuide}: one call per repo state. The model
+ * - Phase A, {@link generateRepoGuide}: one call per repo state (and per
+ *   model — see lib/llm/models.ts). The model
  *   sees the structure, an index of citable files, the import links between
  *   them, and a few key files, and returns the guide as JSON (identity,
  *   workflows, features, reading path, data flow).
@@ -28,7 +29,9 @@ import {
 } from "../guidance/ground";
 import type { RepoGuide, WorkflowDetail, WorkflowSummary } from "../guidance/types";
 import type { CodeGraph } from "../types";
-import { getLlmClient, LLM_REASONING_EFFORT } from "./client";
+import { getLlmClient } from "./client";
+import { LLM_REASONING_EFFORT } from "./chat";
+import { DEFAULT_LLM_MODEL } from "./models";
 import type { KeyFileSelection } from "./keyFiles";
 
 const INDEX_MAX_FILES = 140;
@@ -131,12 +134,17 @@ function replyText(response: { choices: Array<{ message?: { content?: string | n
  * nothing usable after grounding) are mapped to a 502 by the route. Same
  * reasoning-notes contract as explainFile: reasoning effort != none rejects
  * temperature/top_p, so neither is sent.
+ *
+ * `modelId` selects the model (see lib/llm/models; callers pass the user's
+ * Repo Guidance choice), and the returned guide carries that id as its
+ * stamp so caches can serve it back to the right model only.
  */
 export async function generateRepoGuide(
   graph: CodeGraph,
   keyFiles: KeyFileSelection,
+  modelId: string = DEFAULT_LLM_MODEL,
 ): Promise<{ guide: RepoGuide }> {
-  const { client, model } = getLlmClient();
+  const { client, model } = getLlmClient(modelId);
   const response = await client.chat.completions.create({
     model,
     messages: [
@@ -147,7 +155,7 @@ export async function generateRepoGuide(
   });
   const text = replyText(response);
   if (text.length === 0) throw new Error("CityCode: the model returned an empty repository guide");
-  return { guide: groundGuide(extractJsonObject(text), graph) };
+  return { guide: { ...groundGuide(extractJsonObject(text), graph), model } };
 }
 
 /* ------------------------------------------------------------------ *
@@ -198,13 +206,15 @@ export function buildAskUserPrompt(graph: CodeGraph, question: string): string {
 /**
  * One LLM call designing a demo for the user's question. The result is
  * grounded against the graph (real files only) and gets a unique id.
+ * `modelId` carries the session's Repo Guidance model choice.
  */
 export async function designWorkflow(
   graph: CodeGraph,
   question: string,
   existingIds: Iterable<string>,
+  modelId: string = DEFAULT_LLM_MODEL,
 ): Promise<{ workflow: WorkflowSummary }> {
-  const { client, model } = getLlmClient();
+  const { client, model } = getLlmClient(modelId);
   const response = await client.chat.completions.create({
     model,
     messages: [
@@ -353,13 +363,15 @@ export function buildWorkflowUserPrompt(
 /**
  * One LLM call tracing a workflow through its files. `sources` maps file id →
  * lines for the route's readable files (see lib/guidance/sources.ts).
+ * `modelId` carries the session's Repo Guidance model choice.
  */
 export async function traceWorkflow(
   graph: CodeGraph,
   workflow: WorkflowSummary,
   sources: ReadonlyMap<string, readonly string[]>,
+  modelId: string = DEFAULT_LLM_MODEL,
 ): Promise<{ detail: WorkflowDetail }> {
-  const { client, model } = getLlmClient();
+  const { client, model } = getLlmClient(modelId);
   const response = await client.chat.completions.create({
     model,
     messages: [

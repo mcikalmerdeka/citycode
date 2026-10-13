@@ -70,6 +70,13 @@ export interface RepoGuide {
   readingPath: ReadingStop[];
   /** "Data flow" overview narrative. */
   dataFlow: string;
+  /**
+   * Registry id of the model that generated this guide (see lib/llm/models).
+   * Absent on guides generated before per-model selection existed — those
+   * read as the default model's. Guides from different models for the same
+   * repo state are cached side by side, keyed by this stamp.
+   */
+  model?: string;
 }
 
 /** One verified step of a traced workflow. */
@@ -144,6 +151,7 @@ export function isRepoGuide(value: unknown): value is RepoGuide {
     isRecord(value) &&
     isStr(value.identity) &&
     isStr(value.dataFlow) &&
+    (value.model === undefined || isStr(value.model)) &&
     Array.isArray(value.workflows) &&
     value.workflows.every(isWorkflowSummary) &&
     Array.isArray(value.features) &&
